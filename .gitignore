@@ -1,0 +1,7 @@
+venv/*
+secrets/client
+*.pyc
+.DS_STORE
+.idea/*
+masterword.sqlite
+.vscode/*

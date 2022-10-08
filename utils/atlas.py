@@ -1,6 +1,11 @@
+from __future__ import annotations
+
+import aiosqlite
 import asyncio
 
 from typing import Optional
+
+from utils import consts
 
 class Map:
     def __init__(self, locations: list[str]) -> None:
@@ -14,8 +19,10 @@ class ServerAtlas:
     def __init__(self) -> None:
         self._maps: dict[str, Map] = {}
 
-    def add_map(self, map_name: str, locations: list[str]) -> None:
-        self._maps[map_name] = Map(locations)
+    def add_map(self, map_name: str, locations: list[str]) -> Map:
+        map = Map(locations)
+        self._maps[map_name] = map
+        return map
 
     def get_map(self, map_name: str) -> Optional[Map]:
         return self._maps.get(map_name, None)
@@ -30,10 +37,11 @@ class Atlas:
     def __init__(self) -> None:
         self._server_atlases: dict[int, ServerAtlas] = {}
     
-    def add_map(self, server_id: int, map_name: str, locations: list[str]):
+    def _add_map(self, server_id: int, map_name: str, locations: list[str]) -> Map:
         server_atlas = self._server_atlases.get(server_id, ServerAtlas())
-        server_atlas.add_map(map_name, locations)
+        map = server_atlas.add_map(map_name, locations)
         self._server_atlases[server_id] = server_atlas
+        return map
 
     def get_map(self, server_id: int, map_name: str) -> Optional[Map]:
         server_atlas = self._server_atlases.get(server_id, None)
@@ -44,3 +52,22 @@ class Atlas:
         for server_id, server_atlas in self._server_atlases.items():
             output.append(f"{server_id}: [{server_atlas}]")
         return "\n".join(output)
+
+    async def load_from_db(self) -> Atlas:
+        async with aiosqlite.connect(consts.SQLITE_DB) as db:
+            SERVER_ID = 0
+            MAP_NAME = 1
+            LOCATIONS = 2
+            async with db.execute("SELECT server_id, map_name, locations FROM locations") as cursor:
+                async for row in cursor:
+                    server_id = row[SERVER_ID]
+                    map_name = row[MAP_NAME]
+                    locations = row[LOCATIONS].split(',')
+                    self._add_map(server_id, map_name, locations)
+        return self
+
+    async def create_map(self, server_id: int, map_name: str, locations: list[str]) -> Map:
+        map = self._add_map(server_id, map_name, locations)
+        async with map.cond, aiosqlite.connect(consts.SQLITE_DB) as db:
+            await db.execute(f"INSERT OR REPLACE INTO locations (server_id, map_name, locations) VALUES ({server_id}, '{map_name}', '{','.join(map.locations)}')")
+            await db.commit()

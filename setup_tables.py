@@ -7,9 +7,10 @@ from utils import consts
 # could probably be using a timefield but schmeep
 CREATE_TABLE_QUERY = """
 CREATE TABLE IF NOT EXISTS locations (
-    server_id INT PRIMARY KEY NOT NULL,
+    server_id INT NOT NULL,
     map_name TEXT NOT NULL,
-    locations TEXT NOT NULL
+    locations TEXT NOT NULL,
+    PRIMARY KEY (server_id, map_name)
 )
 """
 

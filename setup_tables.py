@@ -6,8 +6,10 @@ from utils import consts
 
 # could probably be using a timefield but schmeep
 CREATE_TABLE_QUERY = """
-CREATE TABLE IF NOT EXISTS server_settings (
-    server_id INT PRIMARY KEY NOT NULL
+CREATE TABLE IF NOT EXISTS locations (
+    server_id INT PRIMARY KEY NOT NULL,
+    map_name TEXT NOT NULL,
+    locations TEXT NOT NULL
 )
 """
 
@@ -16,6 +18,8 @@ async def create_table():
         await db.execute(CREATE_TABLE_QUERY)
         await db.commit()
 
-loop = asyncio.get_event_loop()
-coroutine = create_table()
-loop.run_until_complete(coroutine)
+if __name__ == "__main__":
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    coroutine = create_table()
+    loop.run_until_complete(coroutine)

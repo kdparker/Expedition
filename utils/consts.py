@@ -1,1 +1,1 @@
-SQLITE_DB="bonfire.sqlite"
+SQLITE_DB="expedition.sqlite"

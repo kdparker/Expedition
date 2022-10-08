@@ -3,5 +3,5 @@ secrets/client
 *.pyc
 .DS_STORE
 .idea/*
-masterword.sqlite
+expedition.sqlite
 .vscode/*

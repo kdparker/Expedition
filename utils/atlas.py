@@ -8,7 +8,8 @@ from typing import Optional
 from utils import consts
 
 class Map:
-    def __init__(self, locations: list[str]) -> None:
+    def __init__(self, name: str, locations: list[str]) -> None:
+        self.name = name
         self.locations = locations
         self.cond = asyncio.Condition()
 
@@ -20,7 +21,7 @@ class ServerAtlas:
         self._maps: dict[str, Map] = {}
 
     def add_map(self, map_name: str, locations: list[str]) -> Map:
-        added_map = Map(locations)
+        added_map = Map(map_name, locations)
         self._maps[map_name] = added_map
         return added_map
 

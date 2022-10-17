@@ -4,7 +4,8 @@ import lightbulb
 from lightbulb import commands
 from typing import Optional
 
-from utils.atlas import Atlas
+from utils.atlas import Atlas, Map
+from utils.consts import READ_DENIES, READ_PERMISSIONS, WRITE_DENIES, WRITE_PERMISSIONS
 
 plugin = lightbulb.Plugin("MapPlugin")
 
@@ -49,6 +50,47 @@ async def get_guild(ctx: lightbulb.SlashContext) -> hikari.Guild:
     guild: hikari.Guild = nullable_guild
     return guild
 
+async def get_map(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_name: str) -> Map:
+    nullable_map = atlas.get_map(guild.id, map_name)
+    if nullable_map is None:
+        await ctx.respond(f"Could not find map under name {map_name}")
+        raise ValueError(f"Can't find map name {map_name}")
+    fetched_map: Map = nullable_map
+    return fetched_map
+
+def get_channels_in_category(guild: hikari.Guild, category: hikari.GuildChannel) -> list[hikari.GuildChannel]:
+    channels = []
+    for channel_id, channel, in guild.get_channels().items():
+        if channel.parent_id == category.id:
+            channels.append(channel)
+    return channels
+
+async def get_category_for_chats(guild: hikari.Guild, map_name: str, channel_count: int) -> hikari.GuildChannel:
+    i = 0
+    for i in range(10):
+        category = await ensure_category_exists(guild, f"{map_name}-channels-{i}")
+        channel_count_in_category = len(get_channels_in_category(guild, category))
+        if channel_count_in_category + channel_count <= 45:
+            return category
+    raise ValueError("Somehow hit i=10 for getting category for chats o.o")
+
+def get_sanitized_player_name(player: hikari.Member) -> str:
+    return player.display_name.split()[0].lower()
+
+async def ensure_location_channel(guild: hikari.Guild, player: hikari.Member, category: hikari.GuildChannel, map_of_location: Map, location: str, player_in: bool) -> hikari.GuildChannel:
+    channel_name = f"{get_sanitized_player_name(player)}-{location.lower()}"
+    for channel in get_channels_in_category(guild, category):
+        if channel.name == channel_name:
+            return channel
+    private_perms = await get_private_perms(guild)
+    user_perms = hikari.PermissionOverwrite(
+        id=player.id,
+        type=hikari.PermissionOverwriteType.MEMBER,
+        allow=WRITE_PERMISSIONS if player_in else READ_PERMISSIONS,
+        deny=WRITE_DENIES if player_in else READ_DENIES
+    )
+    return await guild.create_text_channel(channel_name, permission_overwrites=[private_perms, user_perms], category=category.id)
+
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("locations", "Comma separated list of locations (eg. 'forest, beach'), that people can move to (first is default)", type=str)
@@ -64,12 +106,28 @@ async def create_map(ctx: lightbulb.SlashContext):
     for location in locations:
         if ' ' in location:
             return await ctx.respond("location name: `{}` cannot have a space in it".format(location))
-            
+
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding map...", flags=hikari.MessageFlag.EPHEMERAL)
     created_map = await atlas.create_map(guild.id, map_name, locations)
     async with created_map.cond:
         await ensure_category_exists(guild, f"{map_name}-channels-0")
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_UPDATE, f"Map {map_name} created with locations: `{locations}`")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("player", "Member you want to add to the given map", type=hikari.Member)
+@lightbulb.option("map-name", "Name of the map the player will be added to, must already exist", type=str)
+@lightbulb.command("addplayer", "Adds the given member to the given map, placing them in the map's default location")
+@lightbulb.implements(commands.SlashCommand)
+async def add_player(ctx: lightbulb.SlashContext):
+    guild = await get_guild(ctx)
+    player = ctx.options['player']
+    fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.EPHEMERAL)
+    category_for_chats = await get_category_for_chats(guild, fetched_map.name, len(fetched_map.locations))
+    for i, location in enumerate(fetched_map.locations):
+        await ensure_location_channel(guild, player, category_for_chats, fetched_map, location, i == 0)
+    await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

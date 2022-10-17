@@ -41,6 +41,14 @@ async def ensure_category_exists(guild: hikari.Guild, channel_name: str) -> hika
     private_perms = await get_private_perms(guild)
     return await guild.create_category(channel_name, permission_overwrites = [private_perms])
 
+async def get_guild(ctx: lightbulb.SlashContext) -> hikari.Guild:
+    nullable_guild = ctx.get_guild()
+    if nullable_guild is None:
+        await ctx.respond("For some reason the bot could not which server the command came from")
+        raise ValueError("For some reason can't get guild for commands")
+    guild: hikari.Guild = nullable_guild
+    return guild
+
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("locations", "Comma separated list of locations (eg. 'forest, beach'), that people can move to (first is default)", type=str)
@@ -48,17 +56,15 @@ async def ensure_category_exists(guild: hikari.Guild, channel_name: str) -> hika
 @lightbulb.command("createmap", "Creates a map with the given name, and the locations (comma-separated)")
 @lightbulb.implements(commands.SlashCommand)
 async def create_map(ctx: lightbulb.SlashContext):
-    nullable_guild = ctx.get_guild()
+    guild = await get_guild(ctx)
     map_name = ctx.options['map-name']
     locations = list(map(lambda location: location.strip(), ctx.options['locations'].split(',')))
-    if nullable_guild is None:
-        return await ctx.respond("For some reason the bot could not which server the command came from")
-    guild: hikari.Guild = nullable_guild
     if ' ' in map_name:
         return await ctx.respond("map_name: `{}` cannot have a space in it".format(map_name))
     for location in locations:
         if ' ' in location:
             return await ctx.respond("location name: `{}` cannot have a space in it".format(location))
+            
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding map...", flags=hikari.MessageFlag.EPHEMERAL)
     created_map = await atlas.create_map(guild.id, map_name, locations)
     async with created_map.cond:

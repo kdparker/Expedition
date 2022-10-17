@@ -20,9 +20,9 @@ class ServerAtlas:
         self._maps: dict[str, Map] = {}
 
     def add_map(self, map_name: str, locations: list[str]) -> Map:
-        map = Map(locations)
-        self._maps[map_name] = map
-        return map
+        added_map = Map(locations)
+        self._maps[map_name] = added_map
+        return added_map
 
     def get_map(self, map_name: str) -> Optional[Map]:
         return self._maps.get(map_name, None)
@@ -39,9 +39,9 @@ class Atlas:
     
     def _add_map(self, server_id: int, map_name: str, locations: list[str]) -> Map:
         server_atlas = self._server_atlases.get(server_id, ServerAtlas())
-        map = server_atlas.add_map(map_name, locations)
+        added_map = server_atlas.add_map(map_name, locations)
         self._server_atlases[server_id] = server_atlas
-        return map
+        return added_map
 
     def get_map(self, server_id: int, map_name: str) -> Optional[Map]:
         server_atlas = self._server_atlases.get(server_id, None)
@@ -67,7 +67,8 @@ class Atlas:
         return self
 
     async def create_map(self, server_id: int, map_name: str, locations: list[str]) -> Map:
-        map = self._add_map(server_id, map_name, locations)
-        async with map.cond, aiosqlite.connect(consts.SQLITE_DB) as db:
-            await db.execute(f"INSERT OR REPLACE INTO locations (server_id, map_name, locations) VALUES ({server_id}, '{map_name}', '{','.join(map.locations)}')")
+        added_map = self._add_map(server_id, map_name, locations)
+        async with added_map.cond, aiosqlite.connect(consts.SQLITE_DB) as db:
+            await db.execute(f"INSERT OR REPLACE INTO locations (server_id, map_name, locations) VALUES ({server_id}, '{map_name}', '{','.join(added_map.locations)}')")
             await db.commit()
+        return added_map

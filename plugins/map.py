@@ -123,11 +123,12 @@ async def add_player(ctx: lightbulb.SlashContext):
     guild = await get_guild(ctx)
     player = ctx.options['player']
     fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.EPHEMERAL)
-    category_for_chats = await get_category_for_chats(guild, fetched_map.name, len(fetched_map.locations))
-    for i, location in enumerate(fetched_map.locations):
-        await ensure_location_channel(guild, player, category_for_chats, fetched_map, location, i == 0)
-    await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
+    async with fetched_map.cond:
+        await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.EPHEMERAL)
+        category_for_chats = await get_category_for_chats(guild, fetched_map.name, len(fetched_map.locations))
+        for i, location in enumerate(fetched_map.locations):
+            await ensure_location_channel(guild, player, category_for_chats, fetched_map, location, i == 0)
+        await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

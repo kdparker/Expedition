@@ -21,12 +21,12 @@ class ServerAtlas:
         self._maps: dict[str, Map] = {}
 
     def add_map(self, map_name: str, locations: list[str]) -> Map:
-        added_map = Map(map_name, locations)
-        self._maps[map_name] = added_map
+        added_map = Map(map_name.lower(), locations)
+        self._maps[map_name.lower()] = added_map
         return added_map
 
     def get_map(self, map_name: str) -> Optional[Map]:
-        return self._maps.get(map_name, None)
+        return self._maps.get(map_name.lower(), None)
 
     def __str__(self) -> str:
         output = []
@@ -47,6 +47,10 @@ class Atlas:
     def get_map(self, server_id: int, map_name: str) -> Optional[Map]:
         server_atlas = self._server_atlases.get(server_id, None)
         return server_atlas.get_map(map_name) if server_atlas is not None else None
+
+    def get_maps_in_server(self, server_id: int) -> list[Map]:
+        server_atlas = self._server_atlases.get(server_id, None)
+        return server_atlas._maps.values() if server_atlas is not None else []
 
     def __str__(self) -> str:
         output = []

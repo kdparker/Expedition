@@ -65,6 +65,13 @@ def get_channels_in_category(guild: hikari.Guild, category: hikari.GuildChannel)
             channels.append(channel)
     return channels
 
+def get_channels_in_categories(guild: hikari.Guild, category_ids: list[int]) -> list[hikari.GuildChannel]:
+    channels = []
+    for channel_id, channel, in guild.get_channels().items():
+        if channel.parent_id in category_ids:
+            channels.append(channel)
+    return channels
+
 async def get_category_for_chats(guild: hikari.Guild, map_name: str, channel_count: int) -> hikari.GuildChannel:
     i = 0
     for i in range(10):
@@ -76,9 +83,12 @@ async def get_category_for_chats(guild: hikari.Guild, map_name: str, channel_cou
 
 def get_sanitized_player_name(player: hikari.Member) -> str:
     return player.display_name.split()[0].lower()
+    
+def get_player_location_name(player:hikari.Member, location: str) -> str:
+    return f"{get_sanitized_player_name(player)}-{location.lower()}"
 
 async def ensure_location_channel(guild: hikari.Guild, player: hikari.Member, category: hikari.GuildChannel, map_of_location: Map, location: str, player_in: bool) -> hikari.GuildChannel:
-    channel_name = f"{get_sanitized_player_name(player)}-{location.lower()}"
+    channel_name = get_player_location_name(player, location)
     for channel in get_channels_in_category(guild, category):
         if channel.name == channel_name:
             return channel
@@ -90,6 +100,17 @@ async def ensure_location_channel(guild: hikari.Guild, player: hikari.Member, ca
         deny=WRITE_DENIES if player_in else READ_DENIES
     )
     return await guild.create_text_channel(channel_name, permission_overwrites=[private_perms, user_perms], category=category.id)
+
+def get_player_location_channels(guild: hikari.Guild, player: hikari.Member, map_name: str) -> list[hikari.GuildChannel]:
+    map_chat_category_ids: list[int] = []
+    for channel_id, channel in guild.get_channels().items():
+        if channel.name is not None and f"{map_name}-channels-" in channel.name and (channel.type == hikari.channels.ChannelType.GUILD_CATEGORY):
+            map_chat_category_ids.append(channel.id)
+    player_location_channels = []
+    for channel in get_channels_in_categories(guild, map_chat_category_ids):
+        if channel.name is not None and f"{get_sanitized_player_name(player)}-" in channel.name:
+            player_location_channels.append(channel)
+    return player_location_channels
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
@@ -129,6 +150,22 @@ async def add_player(ctx: lightbulb.SlashContext):
         for i, location in enumerate(fetched_map.locations):
             await ensure_location_channel(guild, player, category_for_chats, fetched_map, location, i == 0)
         await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("player", "Member you want to remove from the given map", type=hikari.Member)
+@lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
+@lightbulb.command("removeplayer", 'Removes the given member from the given map, deleting "their" channels')
+@lightbulb.implements(commands.SlashCommand)
+async def remove_player(ctx: lightbulb.SlashContext):
+    guild = await get_guild(ctx)
+    player = ctx.options['player']
+    fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
+    async with fetched_map.cond:
+        await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.EPHEMERAL)
+        for channel in get_player_location_channels(guild, player, fetched_map.name):
+            await channel.delete()
+    return await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

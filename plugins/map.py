@@ -6,10 +6,17 @@ from typing import Optional
 
 from utils.atlas import Atlas, Map
 from utils.consts import READ_DENIES, READ_PERMISSIONS, WRITE_DENIES, WRITE_PERMISSIONS
+from utils.type_enforcer import TypeEnforcer
 
 plugin = lightbulb.Plugin("MapPlugin")
 
 atlas = Atlas()
+
+guildEnforcer = TypeEnforcer[hikari.Guild]()
+guildChannelEnforcer = TypeEnforcer[hikari.GuildChannel]()
+mapEnforcer = TypeEnforcer[Map]()
+memberEnforcer = TypeEnforcer[hikari.Member]()
+stringEnforcer = TypeEnforcer[str]()
 
 async def get_role_with_name(guild:hikari.Guild, role_name: str, should_fetch: bool = True) -> Optional[hikari.Role]:
     if should_fetch:
@@ -43,20 +50,10 @@ async def ensure_category_exists(guild: hikari.Guild, channel_name: str) -> hika
     return await guild.create_category(channel_name, permission_overwrites = [private_perms])
 
 async def get_guild(ctx: lightbulb.SlashContext) -> hikari.Guild:
-    nullable_guild = ctx.get_guild()
-    if nullable_guild is None:
-        await ctx.respond("For some reason the bot could not which server the command came from")
-        raise ValueError("For some reason can't get guild for commands")
-    guild: hikari.Guild = nullable_guild
-    return guild
+    return await guildEnforcer.ensure_type(ctx.get_guild(), ctx, "For some reason the bot could not tell which server the command came from")
 
 async def get_map(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_name: str) -> Map:
-    nullable_map = atlas.get_map(guild.id, map_name)
-    if nullable_map is None:
-        await ctx.respond(f"Could not find map under name {map_name}")
-        raise ValueError(f"Can't find map name {map_name}")
-    fetched_map: Map = nullable_map
-    return fetched_map
+    return await mapEnforcer.ensure_type(atlas.get_map(guild.id, map_name), ctx, f"Could not find map under name {map_name}")
 
 def get_channels_in_category(guild: hikari.Guild, category: hikari.GuildChannel) -> list[hikari.GuildChannel]:
     channels = []
@@ -224,42 +221,32 @@ async def remove_player(ctx: lightbulb.SlashContext):
 async def move(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
-    nullable_player = ctx.member
-    if nullable_player is None:
-        return await ctx.respond("Must be performed within a server")
-    player: hikari.Member = nullable_player
+    player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
     location = ctx.options['location'].lower()
     maps_player_is_in = get_maps_player_is_in(guild, player)
     if not maps_player_is_in:
         return await ctx.respond("Cannot move when you're not in a map")
     map_to_use = maps_player_is_in[0]
     if len(maps_player_is_in) >= 2:
-        nullable_category = get_category_of_channel(guild, ctx.channel_id)
-        if nullable_category is None or nullable_category.name is None:
-            return await ctx.respond("Since you are in two maps, we need you to use the move command in the map you want to move in")
-        category_name: str = nullable_category.name
-        map_name = get_map_name_from_category(category_name)
-        if map_name is None or map_name not in map(lambda m: m.name, maps_player_is_in):
-            return await ctx.respond("Since you are in two maps, we need you to use the move command in the map you want to move in")
+        error_message = "Since you are in two maps, we need you to use the move command in the map you want to move in"
+        category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+        category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+        map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+        if map_name not in map(lambda m: m.name, maps_player_is_in):
+            return await ctx.respond(error_message)
         map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
     async with map_to_use.cond:
         if location not in map_to_use.locations:
             return await ctx.respond(f"{location} is not in the map you are moving in")
-        nullable_active_channel = get_active_channel_for_player_in_map(guild, player, map_to_use)
-        if nullable_active_channel is None:
-            return await ctx.respond("Can't find your active channel for some reason, please contact admins")
-        active_channel: hikari.GuildChannel = nullable_active_channel
-        nullable_location_channel = get_player_location_channel_in_map(guild, player, map_to_use, location)
-        if nullable_location_channel is None:
-            return await ctx.respond(f"Cant find the channel for {location} for some reason, please contact admins")
-        location_channel: hikari.GuildChannel = nullable_location_channel
+        active_channel = await guildChannelEnforcer.ensure_type(
+            get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find your active channel for some reason, please contact admins")
+        location_channel = await guildChannelEnforcer.ensure_type(
+            get_player_location_channel_in_map(guild, player, map_to_use, location), ctx, f"Cant find the channel for {location} for some reason, please contact admins")
         if active_channel == location_channel:
             return await ctx.respond(f"Already in {location}")
         await make_channel_readable_for_player(active_channel, player)
         await make_channel_writeable_for_player(location_channel, player)
         return await ctx.respond(f"You have moved to {location_channel.mention}")
-
-    
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

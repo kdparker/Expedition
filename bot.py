@@ -6,6 +6,7 @@ import sqlite3
 from lightbulb import commands
 
 from plugins import map
+from utils.type_enforcer import TypeEnforcementError
 
 with open('secrets/client', 'r') as client_file:
     token = client_file.read().strip()
@@ -33,6 +34,9 @@ async def on_error(event: lightbulb.CommandErrorEvent) -> None:
         raise event.exception
 
     if isinstance(event.exception, lightbulb.errors.CommandNotFound):
+        return
+
+    if isinstance(event.exception, TypeEnforcementError):
         return
 
     # Unwrap the exception to get the original cause

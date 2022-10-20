@@ -367,6 +367,49 @@ async def whos_here(ctx: lightbulb.SlashContext):
         return await ctx.respond(f"You're the only one in {location}")
     return await ctx.respond(f"{', '.join(map(lambda p: p.mention, location_players))} are in {location}")
 
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("role", "Role that will have read-access on all spectator channels", type=hikari.Role)
+@lightbulb.command("spectator-role", "Set role that all subsequently created channels will have that role as a spectator")
+@lightbulb.implements(commands.SlashCommand)
+async def spectator_role(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting spectator role id...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    role: hikari.Role = ctx.options['role']
+    await settings_manager.set_spectator_role_id(guild.id, role.id)
+    return await ctx.respond(f"{role.mention} set as spectator role for the server")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("role", "Role that will have manage-access on all expedition channels", type=hikari.Role)
+@lightbulb.command("admin-role", "Set role that all subsequently created channels will have that role as an admin")
+@lightbulb.implements(commands.SlashCommand)
+async def admin_role(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting admin role id...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    role: hikari.Role = ctx.options['role']
+    await settings_manager.set_admin_role_id(guild.id, role.id)
+    return await ctx.respond(f"{role.mention} set as admin role for the server")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("enable-role-tracking", "Players added to a map will get roles matching to the locations they are in with this enabled")
+@lightbulb.implements(commands.SlashCommand)
+async def enable_role_tracking(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Enabling role tracking...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    await settings_manager.set_should_track_roles(guild.id, True)
+    return await ctx.respond(f"Enabled role tracking")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("disable-role-tracking", "Players added to a map will not get roles matching to the locations they are in with this disabled")
+@lightbulb.implements(commands.SlashCommand)
+async def disable_role_tracking(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Disabling role tracking...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    await settings_manager.set_should_track_roles(guild.id, False)
+    return await ctx.respond(f"Disabled role tracking")
 
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):

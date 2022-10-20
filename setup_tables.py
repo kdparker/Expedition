@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS server_settings(
     server_id INT NOT NULL,
     spectator_role_id INT,
     admin_role_id INT,
-    should_track_roles INT
+    should_track_roles INT,
+    PRIMARY KEY (server_id)
 );
 """
 

@@ -5,6 +5,7 @@ from lightbulb import commands
 from typing import Optional, Union
 
 from utils.atlas import Atlas, Map
+from utils.settings_manager import ServerSettings, SettingsManager
 from utils.consts import READ_DENIES, READ_PERMISSIONS, WRITE_DENIES, WRITE_PERMISSIONS
 from utils.type_enforcer import TypeEnforcer
 
@@ -13,6 +14,7 @@ WEBHOOK_NAME = "Expedition"
 plugin = lightbulb.Plugin("MapPlugin")
 
 atlas = Atlas()
+settings_manager = SettingsManager()
 
 guildEnforcer = TypeEnforcer[hikari.Guild]()
 guildChannelEnforcer = TypeEnforcer[hikari.GuildChannel]()
@@ -453,3 +455,4 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):
     await atlas.load_from_db()
+    await settings_manager.load_from_db()

@@ -253,6 +253,22 @@ def find_spectator_channel(guild: hikari.Guild, map_to_use: Map, location: str) 
             return spectator_text_channel
     return None
 
+async def ensure_location_role(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_name: str, location: str) -> hikari.Role:
+    existing_roles = await guild.fetch_roles()
+    location_role_name = f"expedition-{map_name.lower()}-{location.lower()}"
+    for role in existing_roles:
+        if location_role_name == role.name:
+            return role
+    return await ctx.bot.rest.create_role(guild, name=location_role_name)
+
+async def set_new_location_role(ctx: lightbulb.SlashContext, player: hikari.Member, guild: hikari.Guild, map_name: str, location: str) -> list[hikari.Role]:
+    roles = await player.fetch_roles()
+    roles = list(filter(lambda r: not r.name.startswith(f"expedition-{map_name.lower()}-"), roles))
+    new_role = await ensure_location_role(ctx, guild, map_name, location)
+    roles.append(new_role)
+    await player.edit(roles=roles)
+    return roles
+
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("locations", "Comma separated list of locations (eg. 'forest, beach'), that people can move to (first is default)", type=str)
@@ -293,10 +309,13 @@ async def add_player(ctx: lightbulb.SlashContext):
         category_for_chats = await get_category_for_chats(guild, fetched_map.name, 1)
         starting_location = fetched_map.locations[0]
         channel = await ensure_location_channel(ctx, guild, player, category_for_chats, fetched_map, starting_location, True)
-        await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
         nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, starting_location)
         if nullable_spectator_text_channel is not None:
             await nullable_spectator_text_channel.send(f"{player.mention} finds themselves on {fetched_map.name}")
+        settings = settings_manager.get_settings(guild.id)
+        if settings.should_track_roles:
+            await set_new_location_role(ctx, player, guild, fetched_map.name, starting_location)
+        await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
@@ -317,6 +336,11 @@ async def remove_player(ctx: lightbulb.SlashContext):
     nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, active_location)
     if nullable_spectator_text_channel is not None:
         await nullable_spectator_text_channel.send(f"{player.mention} removed from {fetched_map.name}")
+    settings = settings_manager.get_settings(guild.id)
+    if settings.should_track_roles:    
+        roles = await player.fetch_roles()
+        roles = list(filter(lambda r: not r.name.startswith(f"expedition-{fetched_map.name.lower()}-"), roles))
+        await player.edit(roles=roles)
     await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
 @lightbulb.add_cooldown(5*60, 1, lightbulb.UserBucket) # cooldown of 5 minutes due to discord limitations of editing a channel name twice every 10 minutes
@@ -360,7 +384,10 @@ async def move(ctx: lightbulb.SlashContext):
     if nullable_spectator_from_text_channel is not None:
         await nullable_spectator_from_text_channel.send(f"{player.mention} went to {location}")
     if nullable_spectator_to_text_channel is not None:
-        await nullable_spectator_to_text_channel.send(f"{player.mention} came from {active_channel_location}")    
+        await nullable_spectator_to_text_channel.send(f"{player.mention} came from {active_channel_location}")
+    settings = settings_manager.get_settings(guild.id)
+    if settings.should_track_roles:
+        await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
 
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")

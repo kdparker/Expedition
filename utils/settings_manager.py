@@ -19,8 +19,8 @@ class SettingsManager:
     def __init__(self) -> None:
         self._settings_dict: dict[int, ServerSettings] = {}
 
-    def get_settings(self, server_id: int) -> Optional[ServerSettings]:
-        return self._settings_dict.get(server_id, None)
+    def get_settings(self, server_id: int) -> ServerSettings:
+        return self._settings_dict.get(server_id, ServerSettings(server_id))
 
     async def set_spectator_role_id(self, server_id: int, spectator_role_id: int) -> ServerSettings:
         server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))

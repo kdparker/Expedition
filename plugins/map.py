@@ -6,7 +6,7 @@ from typing import Optional, Union
 
 from utils.atlas import Atlas, Map
 from utils.settings_manager import ServerSettings, SettingsManager
-from utils.consts import READ_DENIES, READ_PERMISSIONS, WRITE_DENIES, WRITE_PERMISSIONS
+from utils.consts import ADMIN_DENIES, ADMIN_PERMISSIONS, READ_DENIES, READ_PERMISSIONS, WRITE_DENIES, WRITE_PERMISSIONS
 from utils.type_enforcer import TypeEnforcer
 
 WEBHOOK_NAME = "Expedition"
@@ -100,7 +100,16 @@ async def ensure_location_channel(ctx: lightbulb.SlashContext, guild: hikari.Gui
         allow=WRITE_PERMISSIONS if player_in else READ_PERMISSIONS,
         deny=WRITE_DENIES if player_in else READ_DENIES
     )
-    channel = await guild.create_text_channel(channel_name, permission_overwrites=[private_perms, user_perms], category=category.id)
+    perms = [private_perms, user_perms]
+    server_settings = settings_manager.get_settings(guild.id)
+    if server_settings.admin_role_id is not None:
+        perms.append(hikari.PermissionOverwrite(
+            id=server_settings.admin_role_id,
+            type=hikari.PermissionOverwriteType.ROLE,
+            allow=ADMIN_PERMISSIONS,
+            deny=ADMIN_DENIES
+        ))
+    channel = await guild.create_text_channel(channel_name, permission_overwrites=perms, category=category.id)
     await ensure_webhook_on_channel(ctx, channel)
     return channel
 
@@ -110,7 +119,23 @@ async def ensure_spectator_channel(ctx: lightbulb.SlashContext, guild: hikari.Gu
         if channel.name == channel_name:
             return channel
     private_perms = await get_private_perms(guild)
-    channel = await guild.create_text_channel(channel_name, permission_overwrites=[private_perms], category=category.id)
+    perms = [private_perms]
+    server_settings = settings_manager.get_settings(guild.id)
+    if server_settings.admin_role_id is not None:
+        perms.append(hikari.PermissionOverwrite(
+            id=server_settings.admin_role_id,
+            type=hikari.PermissionOverwriteType.ROLE,
+            allow=ADMIN_PERMISSIONS,
+            deny=ADMIN_DENIES
+        ))
+    if server_settings.spectator_role_id is not None:
+        perms.append(hikari.PermissionOverwrite(
+            id=server_settings.spectator_role_id,
+            type=hikari.PermissionOverwriteType.ROLE,
+            allow=READ_PERMISSIONS,
+            deny=READ_DENIES
+        ))
+    channel = await guild.create_text_channel(channel_name, permission_overwrites=perms, category=category.id)
     await ensure_webhook_on_channel(ctx, channel)
     return channel
 

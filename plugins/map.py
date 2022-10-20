@@ -2,11 +2,13 @@ import hikari
 import lightbulb
 
 from lightbulb import commands
-from typing import Optional
+from typing import Optional, Union
 
 from utils.atlas import Atlas, Map
 from utils.consts import READ_DENIES, READ_PERMISSIONS, WRITE_DENIES, WRITE_PERMISSIONS
 from utils.type_enforcer import TypeEnforcer
+
+WEBHOOK_NAME = "Expedition"
 
 plugin = lightbulb.Plugin("MapPlugin")
 
@@ -79,12 +81,12 @@ async def get_category_for_chats(guild: hikari.Guild, map_name: str, channel_cou
     raise ValueError("Somehow hit i=10 for getting category for chats o.o")
 
 def get_sanitized_player_name(player: hikari.Member) -> str:
-    return player.display_name.split()[0].lower()
+    return ''.join((filter(lambda c: c.isalnum() ,player.display_name))).lower()
     
 def get_player_location_name(player:hikari.Member, location: str) -> str:
     return f"{get_sanitized_player_name(player)}-{location.lower()}"
 
-async def ensure_location_channel(guild: hikari.Guild, player: hikari.Member, category: hikari.GuildChannel, map_of_location: Map, location: str, player_in: bool) -> hikari.GuildChannel:
+async def ensure_location_channel(ctx: lightbulb.SlashContext, guild: hikari.Guild, player: hikari.Member, category: hikari.GuildChannel, map_of_location: Map, location: str, player_in: bool) -> hikari.GuildChannel:
     channel_name = get_player_location_name(player, location)
     for channel in get_channels_in_category(guild, category):
         if channel.name == channel_name:
@@ -96,7 +98,19 @@ async def ensure_location_channel(guild: hikari.Guild, player: hikari.Member, ca
         allow=WRITE_PERMISSIONS if player_in else READ_PERMISSIONS,
         deny=WRITE_DENIES if player_in else READ_DENIES
     )
-    return await guild.create_text_channel(channel_name, permission_overwrites=[private_perms, user_perms], category=category.id)
+    channel = await guild.create_text_channel(channel_name, permission_overwrites=[private_perms, user_perms], category=category.id)
+    await ensure_webhook_on_channel(ctx, channel)
+    return channel
+
+async def ensure_spectator_channel(ctx: lightbulb.SlashContext, guild: hikari.Guild, category: hikari.GuildChannel, map_of_location: Map, location: str) -> hikari.GuildChannel:
+    channel_name = f"{map_of_location.name.lower()}-{location.lower()}"
+    for channel in get_channels_in_category(guild, category):
+        if channel.name == channel_name:
+            return channel
+    private_perms = await get_private_perms(guild)
+    channel = await guild.create_text_channel(channel_name, permission_overwrites=[private_perms], category=category.id)
+    await ensure_webhook_on_channel(ctx, channel)
+    return channel
 
 def get_player_location_channels(guild: hikari.Guild, player: hikari.Member, map_name: str) -> list[hikari.GuildChannel]:
     map_chat_category_ids: list[int] = []
@@ -159,19 +173,72 @@ async def make_channel_writeable_for_player(channel: hikari.GuildChannel, player
     )
     return await channel.edit(permission_overwrites=[permissions])
 
+def get_location_channels_location(channel: hikari.GuildChannel) -> Optional[str]:
+    if channel.name is None:
+        return None
+    split_channel = channel.name.split('-')
+    if len(split_channel) < 2:
+        return None
+    return "-".join(split_channel[1:])
+
+async def ensure_webhook_on_channel(ctx: lightbulb.SlashContext, channel: hikari.GuildChannel) -> hikari.PartialWebhook:
+    if not isinstance(channel, hikari.GuildTextChannel):
+        raise ValueError("Trying to attach webhook to non-text-channel")
+    text_channel: hikari.GuildTextChannel = channel
+    channel_webhooks = await ctx.bot.rest.fetch_channel_webhooks(text_channel)
+    for webhook in channel_webhooks:
+        if webhook.name == WEBHOOK_NAME:
+            return webhook
+    webhook = await ctx.bot.rest.create_webhook(text_channel, WEBHOOK_NAME)
+    return webhook
+
+async def get_players_in_location(bot: lightbulb.BotApp, guild: hikari.Guild, map_channels: list[hikari.GuildChannel], location:str) -> list[hikari.Member]:
+    location_players = []
+    for map_channel in map_channels:
+        map_channel_location = get_location_channels_location(map_channel)
+        if location == map_channel_location:
+            channel_permissions = map_channel.permission_overwrites
+            for overwrite_id, permission in channel_permissions.items():
+                if permission.type != hikari.PermissionOverwriteType.MEMBER:
+                    continue
+                player_id = permission.id
+                nullable_player = guild.get_member(player_id)
+                channel_player: hikari.Member = nullable_player if nullable_player is not None else await bot.rest.fetch_member(guild.id, player_id)
+                location_players.append(channel_player)
+    return location_players
+
+def find_spectator_channel(guild: hikari.Guild, map_to_use: Map, location: str) -> Optional[hikari.GuildTextChannel]:
+    nullable_spectator_channel_category = None
+    for possible_spectator_category_id, possible_spectator_category in guild.get_channels().items():
+        if possible_spectator_category.name == f"{map_to_use.name.lower()}-spectator" and possible_spectator_category.type == hikari.ChannelType.GUILD_CATEGORY:
+            nullable_spectator_channel_category = possible_spectator_category
+            break
+    if nullable_spectator_channel_category is None:
+        return None
+    spectator_channel_category: hikari.GuildChannel = nullable_spectator_channel_category
+    spectator_channels = get_channels_in_category(guild, spectator_channel_category)
+    for spectator_channel in spectator_channels:
+        if not isinstance(spectator_channel, hikari.GuildTextChannel):
+            continue
+        spectator_text_channel: hikari.GuildTextChannel = spectator_channel
+        spectator_location = get_location_channels_location(spectator_text_channel)
+        if spectator_location == location:
+            return spectator_text_channel
+    return None
+
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("locations", "Comma separated list of locations (eg. 'forest, beach'), that people can move to (first is default)", type=str)
 @lightbulb.option("map-name", "Name the map will have, will be a prefix for all map-related channels", type=str)
-@lightbulb.command("createmap", "Creates a map with the given name, and the locations (comma-separated)")
+@lightbulb.command("create-map", "Creates a map with the given name, and the locations (comma-separated)")
 @lightbulb.implements(commands.SlashCommand)
 async def create_map(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding map...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
     map_name = ctx.options['map-name']
     locations = list(map(lambda location: location.strip(), ctx.options['locations'].split(',')))
-    if ' ' in map_name:
-        return await ctx.respond("map_name: `{}` cannot have a space in it".format(map_name))
+    if ' ' in map_name or '-' in map_name:
+        return await ctx.respond("map_name: `{}` cannot have a space or - in it".format(map_name))
     for location in locations:
         if ' ' in location:
             return await ctx.respond("location name: `{}` cannot have a space in it".format(location))
@@ -179,47 +246,59 @@ async def create_map(ctx: lightbulb.SlashContext):
     created_map = await atlas.create_map(guild.id, map_name, locations)
     async with created_map.cond:
         await ensure_category_exists(guild, f"{map_name}-channels-0")
+        category = await ensure_category_exists(guild, f"{map_name}-spectator")
+        for location in locations:
+            await ensure_spectator_channel(ctx, guild, category, created_map, location)
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_UPDATE, f"Map {map_name} created with locations: `{locations}`")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("player", "Member you want to add to the given map", type=hikari.Member)
 @lightbulb.option("map-name", "Name of the map the player will be added to, must already exist", type=str)
-@lightbulb.command("addplayer", "Adds the given member to the given map, placing them in the map's default location")
+@lightbulb.command("add-player", "Adds the given member to the given map, placing them in the map's default location")
 @lightbulb.implements(commands.SlashCommand)
 async def add_player(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
-    player = ctx.options['player']
+    player = await memberEnforcer.ensure_type(ctx.options['player'], ctx, "Somehow couldn't get player from the command")
     fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
     async with fetched_map.cond:
-        category_for_chats = await get_category_for_chats(guild, fetched_map.name, len(fetched_map.locations))
-        for i, location in enumerate(fetched_map.locations):
-            await ensure_location_channel(guild, player, category_for_chats, fetched_map, location, i == 0)
+        category_for_chats = await get_category_for_chats(guild, fetched_map.name, 1)
+        starting_location = fetched_map.locations[0]
+        channel = await ensure_location_channel(ctx, guild, player, category_for_chats, fetched_map, starting_location, True)
         await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
+        nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, starting_location)
+        if nullable_spectator_text_channel is not None:
+            await nullable_spectator_text_channel.send(f"{player.mention} finds themselves on {fetched_map.name}")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("player", "Member you want to remove from the given map", type=hikari.Member)
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
-@lightbulb.command("removeplayer", 'Removes the given member from the given map, deleting "their" channels')
+@lightbulb.command("remove-player", 'Removes the given member from the given map, deleting "their" channels')
 @lightbulb.implements(commands.SlashCommand)
 async def remove_player(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
     player = ctx.options['player']
     fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
+    active_location_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, fetched_map), ctx, "Player is not active on the map...")
+    active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_location_channel), ctx, "Player is not active on the map...")
     async with fetched_map.cond:
         for channel in get_player_location_channels(guild, player, fetched_map.name):
             await channel.delete()
-    return await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
+    nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, active_location)
+    if nullable_spectator_text_channel is not None:
+        await nullable_spectator_text_channel.send(f"{player.mention} removed from {fetched_map.name}")
+    await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
+@lightbulb.add_cooldown(5*60, 1, lightbulb.UserBucket) # cooldown of 5 minutes due to discord limitations of editing a channel name twice every 10 minutes
 @plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
 @lightbulb.command("move", "Moves to the given location, based on your current map")
 @lightbulb.implements(commands.SlashCommand)
 async def move(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Moving you...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
     player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
     location = ctx.options['location'].lower()
@@ -240,13 +319,136 @@ async def move(ctx: lightbulb.SlashContext):
             return await ctx.respond(f"{location} is not in the map you are moving in")
         active_channel = await guildChannelEnforcer.ensure_type(
             get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find your active channel for some reason, please contact admins")
-        location_channel = await guildChannelEnforcer.ensure_type(
-            get_player_location_channel_in_map(guild, player, map_to_use, location), ctx, f"Cant find the channel for {location} for some reason, please contact admins")
-        if active_channel == location_channel:
+        active_channel_location = await stringEnforcer.ensure_type(
+            get_location_channels_location(active_channel), ctx, "Could not extract current location of active channel, please contact admins")
+        if active_channel_location == location:
             return await ctx.respond(f"Already in {location}")
-        await make_channel_readable_for_player(active_channel, player)
-        await make_channel_writeable_for_player(location_channel, player)
-        return await ctx.respond(f"You have moved to {location_channel.mention}")
+        try:
+            await active_channel.edit(name=get_player_location_name(player, location))
+        except hikari.RateLimitedError as e:
+            return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
+        await ctx.respond(f"You have moved to {location}", flags=hikari.MessageFlag.NONE)
+    nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
+    nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
+    if nullable_spectator_from_text_channel is not None:
+        await nullable_spectator_from_text_channel.send(f"{player.mention} went to {location}")
+    if nullable_spectator_to_text_channel is not None:
+        await nullable_spectator_to_text_channel.send(f"{player.mention} came from {active_channel_location}")    
+
+@plugin.command
+@lightbulb.command("whos-here", "Moves to the given location, based on your current map")
+@lightbulb.implements(commands.SlashCommand)
+async def whos_here(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Determining who's in your location...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
+    maps_player_is_in = get_maps_player_is_in(guild, player)
+    if not maps_player_is_in:
+        return await ctx.respond("You're not in a map")
+    map_to_use = maps_player_is_in[0]
+    if len(maps_player_is_in) >= 2:
+        error_message = "Since you are in two maps, we need you to use the command in the map you want check on"
+        category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+        category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+        map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+        if map_name not in map(lambda m: m.name, maps_player_is_in):
+            return await ctx.respond(error_message)
+        map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    active_channel = await guildChannelEnforcer.ensure_type(
+        get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Could not find a channel you are active in for your location, if this is an error contact the admins")
+    category = await guildChannelEnforcer.ensure_type(
+        get_category_of_channel(guild, active_channel.id), ctx, "Could not find category of active channel, contact the admins")
+    location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Could not determine location from your active channel, contact the admins")
+    map_channels = get_channels_in_category(guild, category)
+    location_players = await get_players_in_location(ctx.bot, guild, map_channels, location)
+    if len(location_players) <= 1:
+        return await ctx.respond(f"You're the only one in {location}")
+    return await ctx.respond(f"{', '.join(map(lambda p: p.mention, location_players))} are in {location}")
+
+
+@plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
+async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
+    bot = plugin.bot
+    if event.message.author.is_bot:
+        return
+    if event.message.guild_id is None:
+        return
+    nullable_guild = bot.cache.get_available_guild(event.message.guild_id)
+    if nullable_guild is None:
+        return
+    guild: hikari.Guild = nullable_guild
+    nullable_channel =  bot.cache.get_guild_channel(event.message.channel_id)
+    if nullable_channel is None:
+        return
+    channel: hikari.GuildChannel = nullable_channel
+    nullable_category = get_category_of_channel(guild, channel.id)  
+    if nullable_category is None:
+        return
+    category: hikari.GuildChannel = nullable_category
+    nullable_category_name = category.name
+    if nullable_category_name is None or "-spectator" in nullable_category_name:
+        return
+    category_name: str = nullable_category_name
+    nullable_map_name = get_map_name_from_category(category_name)
+    if nullable_map_name is None:
+        return
+    map_name: str = nullable_map_name
+    nullable_fetched_map = atlas.get_map(guild.id, map_name)
+    if nullable_fetched_map is None:
+        return
+    fetched_map: Map = nullable_fetched_map
+    nullable_location = get_location_channels_location(channel)
+    if nullable_location is None:
+        return
+    location: str = nullable_location
+    chat_channels = get_channels_in_category(guild, category)
+    for chat_channel in chat_channels:
+        if chat_channel == channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+            continue
+        chat_text_channel: hikari.GuildTextChannel = chat_channel
+        chat_channel_location = get_location_channels_location(chat_text_channel)
+        if chat_channel_location == location:
+            webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
+            for webhook in webhooks:
+                if not(webhook.name == WEBHOOK_NAME and isinstance(webhook, hikari.ExecutableWebhook)):
+                    continue
+                executable_webhook: hikari.ExecutableWebhook = webhook
+                content = event.message.content or ""
+            
+                await executable_webhook.execute(
+                    content=content,
+                    username=event.message.member.display_name if event.message.member is not None else hikari.UNDEFINED,
+                    avatar_url=str(event.message.author.avatar_url) if event.message.author.avatar_url else hikari.UNDEFINED,
+                    attachments=event.message.attachments,
+                    embeds=event.message.embeds,
+                    mentions_everyone=False,
+                    flags=event.message.flags
+                )
+    location_players = await get_players_in_location(bot, guild, chat_channels, location)
+    other_players_in_channel = list(filter(lambda p: event.message.member is None or p.id != event.message.member.id, location_players))
+    nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, location)
+    if nullable_spectator_text_channel is None:
+        return
+    spectator_text_channel: hikari.GuildTextChannel = nullable_spectator_text_channel
+    spectator_webhooks = await bot.rest.fetch_channel_webhooks(spectator_text_channel)
+    for spectator_webhook in spectator_webhooks:
+        if not (spectator_webhook.name == WEBHOOK_NAME and isinstance(spectator_webhook, hikari.ExecutableWebhook)):
+            continue
+        executable_spectator_webhook: hikari.ExecutableWebhook = spectator_webhook
+        name = "{} (to {})".format(
+            event.message.member.display_name if event.message.member is not None else "???", 
+            ", ".join(map(lambda x: x.display_name, other_players_in_channel)) if other_players_in_channel else "nobody else")
+        content = event.message.content or ""
+    
+        await executable_spectator_webhook.execute(
+            content=content,
+            username=name,
+            avatar_url=str(event.message.author.avatar_url) if event.message.author.avatar_url else hikari.UNDEFINED,
+            attachments=event.message.attachments,
+            embeds=event.message.embeds,
+            mentions_everyone=False,
+            flags=event.message.flags
+        )
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

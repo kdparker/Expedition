@@ -14,7 +14,7 @@ with open('secrets/client', 'r') as client_file:
 bot = lightbulb.BotApp(
     token=token,
     intents=hikari.Intents.ALL, 
-    default_enabled_guilds=(935683503461388388),
+    default_enabled_guilds=(935683503461388388, 935683457865117766),
     logs={
         "version": 1,
         "incremental": True,
@@ -38,6 +38,10 @@ async def on_error(event: lightbulb.CommandErrorEvent) -> None:
 
     if isinstance(event.exception, TypeEnforcementError):
         return
+
+    if isinstance(event.exception, lightbulb.CommandIsOnCooldown):
+        await event.context.respond(f"Command is on cooldown for {event.exception.retry_after} seconds", flags=hikari.MessageFlag.EPHEMERAL)
+        return 
 
     # Unwrap the exception to get the original cause
     exception = event.exception.__cause__ or event.exception

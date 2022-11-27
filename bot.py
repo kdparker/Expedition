@@ -14,7 +14,7 @@ with open('secrets/client', 'r') as client_file:
 bot = lightbulb.BotApp(
     token=token,
     intents=hikari.Intents.ALL, 
-    default_enabled_guilds=(935683503461388388, 935683457865117766),
+    default_enabled_guilds=(),
     logs={
         "version": 1,
         "incremental": True,

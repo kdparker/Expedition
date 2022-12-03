@@ -255,7 +255,7 @@ def find_spectator_channel(guild: hikari.Guild, map_to_use: Map, location: str) 
 
 async def ensure_location_role(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_name: str, location: str) -> hikari.Role:
     existing_roles = await guild.fetch_roles()
-    location_role_name = f"expedition-{map_name.lower()}-{location.lower()}"
+    location_role_name = f"{map_name.lower()}-{location.lower()}"
     for role in existing_roles:
         if location_role_name == role.name:
             return role
@@ -462,6 +462,19 @@ async def disable_role_tracking(ctx: lightbulb.SlashContext):
     guild = await get_guild(ctx)
     await settings_manager.set_should_track_roles(guild.id, False)
     return await ctx.respond(f"Disabled role tracking")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
+@lightbulb.command("prepopulate-roles", "Create all roles for a map without needing to go there, useful for setting up for a season")
+@lightbulb.implements(commands.SlashCommand)
+async def prepopulate_roles(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Prepopulating roles tracking...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    map = await mapEnforcer.ensure_type(atlas.get_map(guild.id, ctx.options["map-name"]), ctx, "Cannot find map with the chosen name")
+    for location in map.locations:
+        await ensure_location_role(ctx, guild, ctx.options['map-name'], location)
+    await ctx.respond("Roles pre-populated")
 
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):

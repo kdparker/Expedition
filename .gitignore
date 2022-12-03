@@ -1,5 +1,6 @@
 venv/*
 secrets/client
+secrets/client.test
 *.pyc
 .DS_STORE
 .idea/*

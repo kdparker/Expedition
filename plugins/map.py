@@ -479,7 +479,7 @@ async def prepopulate_roles(ctx: lightbulb.SlashContext):
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
     bot = plugin.bot
-    if event.message.author == plugin.bot.get_me().id:
+    if event.message.author.is_bot:
         return
     if event.message.guild_id is None:
         return

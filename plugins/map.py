@@ -263,7 +263,7 @@ async def ensure_location_role(ctx: lightbulb.SlashContext, guild: hikari.Guild,
 
 async def set_new_location_role(ctx: lightbulb.SlashContext, player: hikari.Member, guild: hikari.Guild, map_name: str, location: str) -> list[hikari.Role]:
     roles = await player.fetch_roles()
-    roles = list(filter(lambda r: not r.name.startswith(f"expedition-{map_name.lower()}-"), roles))
+    roles = list(filter(lambda r: not r.name.startswith(f"{map_name.lower()}-"), roles))
     new_role = await ensure_location_role(ctx, guild, map_name, location)
     roles.append(new_role)
     await player.edit(roles=roles)

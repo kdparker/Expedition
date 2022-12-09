@@ -479,7 +479,7 @@ async def prepopulate_roles(ctx: lightbulb.SlashContext):
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
     bot = plugin.bot
-    if event.message.author.is_bot:
+    if event.is_webhook:
         return
     if event.message.guild_id is None:
         return
@@ -520,7 +520,7 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         if chat_channel_location == location:
             webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
             for webhook in webhooks:
-                if not(webhook.name == WEBHOOK_NAME and isinstance(webhook, hikari.ExecutableWebhook)):
+                if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
                     continue
                 executable_webhook: hikari.ExecutableWebhook = webhook
                 content = event.message.content or ""

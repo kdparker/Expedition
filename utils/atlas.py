@@ -72,6 +72,8 @@ class Atlas:
         return self
 
     async def create_map(self, server_id: int, map_name: str, locations: list[str]) -> Map:
+        map_name = map_name.lower()
+        locations = list(map(lambda location: location.lower(), locations))
         added_map = self._add_map(server_id, map_name, locations)
         async with added_map.cond, aiosqlite.connect(consts.SQLITE_DB) as db:
             await db.execute(f"INSERT OR REPLACE INTO locations (server_id, map_name, locations) VALUES ({server_id}, '{map_name}', '{','.join(added_map.locations)}')")

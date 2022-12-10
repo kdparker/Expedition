@@ -278,7 +278,7 @@ async def set_new_location_role(ctx: lightbulb.SlashContext, player: hikari.Memb
 async def create_map(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding map...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
-    map_name = ctx.options['map-name']
+    map_name = ctx.options['map-name'].lower()
     locations = list(map(lambda location: location.strip(), ctx.options['locations'].split(',')))
     if ' ' in map_name or '-' in map_name:
         return await ctx.respond("map_name: `{}` cannot have a space or - in it".format(map_name))
@@ -288,11 +288,11 @@ async def create_map(ctx: lightbulb.SlashContext):
 
     created_map = await atlas.create_map(guild.id, map_name, locations)
     async with created_map.cond:
-        await ensure_category_exists(guild, f"{map_name}-channels-0")
-        category = await ensure_category_exists(guild, f"{map_name}-spectator")
+        await ensure_category_exists(guild, f"{created_map.name}-channels-0")
+        category = await ensure_category_exists(guild, f"{created_map.name}-spectator")
         for location in locations:
             await ensure_spectator_channel(ctx, guild, category, created_map, location)
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_UPDATE, f"Map {map_name} created with locations: `{locations}`")
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_UPDATE, f"Map {created_map.name} created with locations: `{locations}`")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
@@ -302,9 +302,10 @@ async def create_map(ctx: lightbulb.SlashContext):
 @lightbulb.implements(commands.SlashCommand)
 async def add_player(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.EPHEMERAL)
+    map_name = ctx.options["map-name"].lower()
     guild = await get_guild(ctx)
     player = await memberEnforcer.ensure_type(ctx.options['player'], ctx, "Somehow couldn't get player from the command")
-    fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
+    fetched_map = await get_map(ctx, guild, map_name)
     async with fetched_map.cond:
         category_for_chats = await get_category_for_chats(guild, fetched_map.name, 1)
         starting_location = fetched_map.locations[0]
@@ -325,9 +326,10 @@ async def add_player(ctx: lightbulb.SlashContext):
 @lightbulb.implements(commands.SlashCommand)
 async def remove_player(ctx: lightbulb.SlashContext):
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.EPHEMERAL)
+    map_name = ctx.options["map-name"].lower()
     guild = await get_guild(ctx)
     player = ctx.options['player']
-    fetched_map = await get_map(ctx, guild, ctx.options['map-name'])
+    fetched_map = await get_map(ctx, guild, map_name)
     active_location_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, fetched_map), ctx, "Player is not active on the map...")
     active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_location_channel), ctx, "Player is not active on the map...")
     async with fetched_map.cond:
@@ -469,11 +471,12 @@ async def disable_role_tracking(ctx: lightbulb.SlashContext):
 @lightbulb.command("prepopulate-roles", "Create all roles for a map without needing to go there, useful for setting up for a season")
 @lightbulb.implements(commands.SlashCommand)
 async def prepopulate_roles(ctx: lightbulb.SlashContext):
+    map_name = ctx.options["map-name"].lower()
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Prepopulating roles tracking...", flags=hikari.MessageFlag.EPHEMERAL)
     guild = await get_guild(ctx)
-    map = await mapEnforcer.ensure_type(atlas.get_map(guild.id, ctx.options["map-name"]), ctx, "Cannot find map with the chosen name")
+    map = await mapEnforcer.ensure_type(atlas.get_map(guild.id, map_name), ctx, "Cannot find map with the chosen name")
     for location in map.locations:
-        await ensure_location_role(ctx, guild, ctx.options['map-name'], location)
+        await ensure_location_role(ctx, guild, map_name, location)
     await ctx.respond("Roles pre-populated")
 
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]

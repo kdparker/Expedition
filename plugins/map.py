@@ -1,3 +1,4 @@
+import datetime
 import hikari
 import lightbulb
 import re
@@ -348,7 +349,6 @@ async def remove_player(ctx: lightbulb.SlashContext):
         await player.edit(roles=roles)
     await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
-@lightbulb.add_cooldown(5*60, 1, lightbulb.UserBucket) # cooldown of 5 minutes due to discord limitations of editing a channel name twice every 10 minutes
 @plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
 @lightbulb.command("move", "Moves to the given location, based on your current map")
@@ -373,6 +373,12 @@ async def move(ctx: lightbulb.SlashContext):
     async with map_to_use.cond:
         if location not in map_to_use.locations:
             return await ctx.respond(f"{location} is not in the map you are moving in")
+        if player.id in map_to_use.cooldowns:
+            last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
+            next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=5)
+            diff = next_possible_movement_time - datetime.datetime.now()
+            if diff.seconds > 0:
+                return await ctx.respond(f"Movement in this map is still on cooldown for {diff.seconds} seconds")
         active_channel = await guildChannelEnforcer.ensure_type(
             get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find your active channel for some reason, please contact admins")
         active_channel_location = await stringEnforcer.ensure_type(
@@ -383,6 +389,7 @@ async def move(ctx: lightbulb.SlashContext):
             await active_channel.edit(name=get_player_location_name(player, location))
         except hikari.RateLimitedError as e:
             return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
+        map_to_use.reset_cooldown(player.id)
         await ctx.respond(f"You have moved to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)

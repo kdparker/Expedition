@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import aiosqlite
 import asyncio
+import datetime
 
 from typing import Optional
 
@@ -11,10 +12,14 @@ class Map:
     def __init__(self, name: str, locations: list[str]) -> None:
         self.name = name
         self.locations = locations
+        self.cooldowns: dict[int, datetime.datetime] = {}
         self.cond = asyncio.Condition()
 
     def __str__(self) -> str:
         return str(self.locations)
+
+    def reset_cooldown(self, player_id: int) -> datetime.datetime:
+        self.cooldowns[player_id] = datetime.datetime.now()
 
 class ServerAtlas:
     def __init__(self) -> None:

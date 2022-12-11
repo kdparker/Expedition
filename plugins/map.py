@@ -1,5 +1,6 @@
 import hikari
 import lightbulb
+import re
 
 from lightbulb import commands
 from typing import Optional, Union
@@ -21,6 +22,8 @@ guildChannelEnforcer = TypeEnforcer[hikari.GuildChannel]()
 mapEnforcer = TypeEnforcer[Map]()
 memberEnforcer = TypeEnforcer[hikari.Member]()
 stringEnforcer = TypeEnforcer[str]()
+
+emote_pattern = r'^<(a?):.*:(\d+)>$'
 
 async def get_role_with_name(guild:hikari.Guild, role_name: str, should_fetch: bool = True) -> Optional[hikari.Role]:
     if should_fetch:
@@ -391,6 +394,32 @@ async def move(ctx: lightbulb.SlashContext):
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
 
+async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message):
+    content = message.content or ""
+    embeds = message.embeds
+
+    if ((content.startswith("https://") or content.startswith("http://")) and 
+        len(content.split(' ')) == 1 
+        and len(embeds) == 1 and not embeds[0].author and not embeds[0].description and not embeds[0].fields
+        and embeds[0].url == content):
+        embeds = []
+    is_only_emote = re.match(emote_pattern, content)
+    if is_only_emote:
+        cached_emoji = bot.cache.get_emoji(int(is_only_emote.group(2)))
+        if not cached_emoji:
+            postfix = "gif" if is_only_emote.group(1) else "png"
+            content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
+    await webhook.execute(
+        content=content,
+        username=display_name,
+        avatar_url=str(message.author.avatar_url) if message.author.avatar_url else hikari.UNDEFINED,
+        attachments=message.attachments,
+        embeds=embeds,
+        mentions_everyone=False,
+        flags=message.flags
+    )
+
+
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")
 @lightbulb.implements(commands.SlashCommand)
@@ -522,21 +551,12 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         chat_channel_location = get_location_channels_location(chat_text_channel)
         if chat_channel_location == location:
             webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
+            display_name: hikari.UndefinedOr[str] = event.message.member.display_name if event.message.member is not None else hikari.UNDEFINED
             for webhook in webhooks:
                 if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
                     continue
-                executable_webhook: hikari.ExecutableWebhook = webhook
-                content = event.message.content or ""
-            
-                await executable_webhook.execute(
-                    content=content,
-                    username=event.message.member.display_name if event.message.member is not None else hikari.UNDEFINED,
-                    avatar_url=str(event.message.author.avatar_url) if event.message.author.avatar_url else hikari.UNDEFINED,
-                    attachments=event.message.attachments,
-                    embeds=event.message.embeds,
-                    mentions_everyone=False,
-                    flags=event.message.flags
-                )
+                await execute_mirrored_webhook(plugin.bot, webhook, display_name, event.message)
+
     location_players = await get_players_in_location(bot, guild, chat_channels, location)
     other_players_in_channel = list(filter(lambda p: event.message.member is None or p.id != event.message.member.id, location_players))
     nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, location)
@@ -544,24 +564,13 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         return
     spectator_text_channel: hikari.GuildTextChannel = nullable_spectator_text_channel
     spectator_webhooks = await bot.rest.fetch_channel_webhooks(spectator_text_channel)
+    display_name = "{} (to {})".format(
+        event.message.member.display_name if event.message.member is not None else "???", 
+        ", ".join(map(lambda x: x.display_name, other_players_in_channel)) if other_players_in_channel else "nobody else")
     for spectator_webhook in spectator_webhooks:
         if not (spectator_webhook.name == WEBHOOK_NAME and isinstance(spectator_webhook, hikari.ExecutableWebhook)):
             continue
-        executable_spectator_webhook: hikari.ExecutableWebhook = spectator_webhook
-        name = "{} (to {})".format(
-            event.message.member.display_name if event.message.member is not None else "???", 
-            ", ".join(map(lambda x: x.display_name, other_players_in_channel)) if other_players_in_channel else "nobody else")
-        content = event.message.content or ""
-    
-        await executable_spectator_webhook.execute(
-            content=content,
-            username=name,
-            avatar_url=str(event.message.author.avatar_url) if event.message.author.avatar_url else hikari.UNDEFINED,
-            attachments=event.message.attachments,
-            embeds=event.message.embeds,
-            mentions_everyone=False,
-            flags=event.message.flags
-        )
+        await execute_mirrored_webhook(plugin.bot, spectator_webhook, display_name, event.message)
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

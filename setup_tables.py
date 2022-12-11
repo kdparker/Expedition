@@ -24,10 +24,15 @@ CREATE TABLE IF NOT EXISTS server_settings(
 );
 """
 
+ADD_COOLDOWN_SETTINGS_QUERY = """
+ALTER TABLE server_settings ADD COLUMN cooldown_minutes INT DEFAULT 5;
+"""
+
 async def create_table():
     async with aiosqlite.connect(consts.SQLITE_DB) as db:
         await db.execute(CREATE_LOCATIONS_QUERY)
         await db.execute(CREATE_SETTINGS_QUERY)
+        await db.execute(ADD_COOLDOWN_SETTINGS_QUERY)
         await db.commit()
 
 if __name__ == "__main__":

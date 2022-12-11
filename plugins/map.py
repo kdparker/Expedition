@@ -359,6 +359,7 @@ async def move(ctx: lightbulb.SlashContext):
     player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
     location = ctx.options['location'].lower()
     maps_player_is_in = get_maps_player_is_in(guild, player)
+    settings = settings_manager.get_settings(guild.id)
     if not maps_player_is_in:
         return await ctx.respond("Cannot move when you're not in a map")
     map_to_use = maps_player_is_in[0]
@@ -375,7 +376,7 @@ async def move(ctx: lightbulb.SlashContext):
             return await ctx.respond(f"{location} is not in the map you are moving in")
         if player.id in map_to_use.cooldowns:
             last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
-            next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=5)
+            next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
             diff = next_possible_movement_time - datetime.datetime.now()
             if diff.seconds > 0:
                 return await ctx.respond(f"Movement in this map is still on cooldown for {diff.seconds} seconds")
@@ -397,7 +398,6 @@ async def move(ctx: lightbulb.SlashContext):
         await nullable_spectator_from_text_channel.send(f"{player.mention} went to {location}")
     if nullable_spectator_to_text_channel is not None:
         await nullable_spectator_to_text_channel.send(f"{player.mention} came from {active_channel_location}")
-    settings = settings_manager.get_settings(guild.id)
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
 
@@ -500,6 +500,20 @@ async def disable_role_tracking(ctx: lightbulb.SlashContext):
     guild = await get_guild(ctx)
     await settings_manager.set_should_track_roles(guild.id, False)
     return await ctx.respond(f"Disabled role tracking")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("minutes", "Minutes to set cooldown to (must be >=5)", type=int)
+@lightbulb.command("set-movement-cooldown", "How many minutes a player has to wait before moving again (must be >= 5 due to discord rate limits)")
+@lightbulb.implements(commands.SlashCommand)
+async def set_movement_cooldown(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.EPHEMERAL)
+    minutes = ctx.options['minutes']
+    if minutes < 5:
+        return await ctx.respond("The cooldown must be greater than 5 minutes due to discord rate limits on editing channels")
+    guild = await get_guild(ctx)
+    await settings_manager.set_cooldown_minutes(guild.id, minutes)
+    return await ctx.respond(f"Cooldown set")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))

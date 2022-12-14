@@ -273,6 +273,35 @@ async def set_new_location_role(ctx: lightbulb.SlashContext, player: hikari.Memb
     await player.edit(roles=roles)
     return roles
 
+async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message):
+    content = message.content or ""
+    embeds = message.embeds
+    avatar_url: Union[hikari.UndefinedType, str, hikari.URL] = message.author.avatar_url or hikari.UNDEFINED
+    avatar_url = message.member.guild_avatar_url if message.member and message.member.guild_avatar_url else avatar_url
+
+    if ((content.startswith("https://") or content.startswith("http://")) and 
+        len(content.split(' ')) == 1 
+        and len(embeds) == 1 and not embeds[0].author and not embeds[0].description and not embeds[0].fields
+        and embeds[0].url == content):
+        embeds = []
+    is_only_emote = re.match(emote_pattern, content)
+    if is_only_emote:
+        cached_emoji = bot.cache.get_emoji(int(is_only_emote.group(2)))
+        if not cached_emoji:
+            postfix = "gif" if is_only_emote.group(1) else "png"
+            content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
+    if message.stickers:
+        content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
+    await webhook.execute(
+        content=content,
+        username=display_name,
+        avatar_url=avatar_url,
+        attachments=message.attachments,
+        embeds=embeds,
+        mentions_everyone=False,
+        flags=message.flags
+    )
+
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("locations", "Comma separated list of locations (eg. 'forest, beach'), that people can move to (first is default)", type=str)
@@ -401,36 +430,6 @@ async def move(ctx: lightbulb.SlashContext):
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
 
-async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message):
-    content = message.content or ""
-    embeds = message.embeds
-    avatar_url: Union[hikari.UndefinedType, str, hikari.URL] = message.author.avatar_url or hikari.UNDEFINED
-    avatar_url = message.member.guild_avatar_url if message.member and message.member.guild_avatar_url else avatar_url
-
-    if ((content.startswith("https://") or content.startswith("http://")) and 
-        len(content.split(' ')) == 1 
-        and len(embeds) == 1 and not embeds[0].author and not embeds[0].description and not embeds[0].fields
-        and embeds[0].url == content):
-        embeds = []
-    is_only_emote = re.match(emote_pattern, content)
-    if is_only_emote:
-        cached_emoji = bot.cache.get_emoji(int(is_only_emote.group(2)))
-        if not cached_emoji:
-            postfix = "gif" if is_only_emote.group(1) else "png"
-            content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
-    if message.stickers:
-        content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
-    await webhook.execute(
-        content=content,
-        username=display_name,
-        avatar_url=avatar_url,
-        attachments=message.attachments,
-        embeds=embeds,
-        mentions_everyone=False,
-        flags=message.flags
-    )
-
-
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")
 @lightbulb.implements(commands.SlashCommand)
@@ -532,6 +531,24 @@ async def prepopulate_roles(ctx: lightbulb.SlashContext):
     for location in map.locations:
         await ensure_location_role(ctx, guild, map_name, location)
     await ctx.respond("Roles pre-populated")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("location-name", "Name of the location to add to the map", type=str)
+@lightbulb.option("map-name", "Name of the map the location will be added to", type=str)
+@lightbulb.command("add-location", "Add the named location to the given map")
+@lightbulb.implements(commands.SlashCommand)
+async def add_location(ctx: lightbulb.SlashContext):
+    map_name = ctx.options["map-name"].lower()
+    location_name = ctx.options["location-name"].lower()
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding location...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    result_map = await atlas.add_location(guild.id, map_name, location_name)
+    if result_map is None:
+        return await ctx.respond(f"Failed to add {location_name} to {map_name}, this could be because the map doesn't exist, or the location already exists in the map")
+    category = await ensure_category_exists(guild, f"{result_map.name}-spectator")
+    await ensure_spectator_channel(ctx, guild, category, result_map, location_name)
+    await ctx.respond(f"Added {location_name} to {map_name}")
 
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):

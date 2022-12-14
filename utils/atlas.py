@@ -57,6 +57,19 @@ class Atlas:
         server_atlas = self._server_atlases.get(server_id, None)
         return server_atlas._maps.values() if server_atlas is not None else []
 
+    async def add_location(self, server_id: int, map_name: str, location_name: str) -> Optional[Map]:
+        server_atlas = self._server_atlases.get(server_id, None)
+        if server_atlas is None:
+            return None
+        fetched_map = server_atlas.get_map(map_name.lower())
+        if fetched_map is None:
+            return None
+        if location_name in fetched_map.locations:
+            return None
+        fetched_map.locations.append(location_name)
+        await self._save_map(server_id, fetched_map)
+        return fetched_map
+            
     def __str__(self) -> str:
         output = []
         for server_id, server_atlas in self._server_atlases.items():
@@ -80,7 +93,12 @@ class Atlas:
         map_name = map_name.lower()
         locations = list(map(lambda location: location.lower(), locations))
         added_map = self._add_map(server_id, map_name, locations)
-        async with added_map.cond, aiosqlite.connect(consts.SQLITE_DB) as db:
-            await db.execute(f"INSERT OR REPLACE INTO locations (server_id, map_name, locations) VALUES ({server_id}, '{map_name}', '{','.join(added_map.locations)}')")
-            await db.commit()
+        await self._save_map(server_id, added_map)
         return added_map
+
+    async def _save_map(self, server_id: int, map_to_save: Map):
+        map_name = map_to_save.name.lower()
+        locations = map_to_save.locations
+        async with map_to_save.cond, aiosqlite.connect(consts.SQLITE_DB) as db:
+            await db.execute(f"INSERT OR REPLACE INTO locations (server_id, map_name, locations) VALUES ({server_id}, '{map_name}', '{','.join(locations)}')")
+            await db.commit()

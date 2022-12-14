@@ -15,6 +15,7 @@ class ServerSettings:
     admin_role_id: Optional[int] = None
     should_track_roles: bool = False
     cooldown_minutes: int = 5
+    sync_commands_and_bots_to_spectators: bool = True
     
 class SettingsManager:
     def __init__(self) -> None:
@@ -51,6 +52,13 @@ class SettingsManager:
         await self._update_settings(server_settings)
         return server_settings
 
+    async def set_sync_commands_and_bots_to_spectators(self, server_id: int, sync_commands_and_bots_to_spectators: bool) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.sync_commands_and_bots_to_spectators = sync_commands_and_bots_to_spectators
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+
     async def load_from_db(self) -> SettingsManager:
         async with aiosqlite.connect(consts.SQLITE_DB) as db:
             SERVER_ID = 0
@@ -58,14 +66,16 @@ class SettingsManager:
             ADMIN_ROLE_ID = 2
             SHOULD_TRACK_ROLES = 3
             COOLDOWN_MINUTES = 4
-            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes FROM server_settings") as cursor:
+            SYNC_COMMANDS = 5
+            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators FROM server_settings") as cursor:
                 async for row in cursor:
                     server_id = row[SERVER_ID]
                     spectator_role_id = row[SPECTATOR_ROLE_ID]
                     admin_role_id = row[ADMIN_ROLE_ID]
                     should_track_roles = True if row[SHOULD_TRACK_ROLES] else False
                     cooldown_minutes = row[COOLDOWN_MINUTES]
-                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes)
+                    sync_commands_and_bots_to_spectators = True if row[SYNC_COMMANDS] else False
+                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators)
                     self._settings_dict[server_id] = server_settings
         return self
 

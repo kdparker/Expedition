@@ -278,7 +278,7 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
     embeds = message.embeds
     avatar_url: Union[hikari.UndefinedType, str, hikari.URL] = message.author.avatar_url or hikari.UNDEFINED
     avatar_url = message.member.guild_avatar_url if message.member and message.member.guild_avatar_url else avatar_url
-
+    
     if ((content.startswith("https://") or content.startswith("http://")) and 
         len(content.split(' ')) == 1 
         and len(embeds) == 1 and not embeds[0].author and not embeds[0].description and not embeds[0].fields
@@ -301,6 +301,9 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         mentions_everyone=False,
         flags=message.flags
     )
+
+def message_is_bot_or_commandlike(message: hikari.Message) -> bool:
+    return (message.content is not None and message.content[0] in ("=", "!", "/", "?", ".")) or message.author.is_bot
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
@@ -506,6 +509,18 @@ async def disable_role_tracking(ctx: lightbulb.SlashContext):
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("toggle-bot-and-command-mirroring", "Turns on/off command like and bot messages mirroring to spectator channels, default on")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_sync_commands_and_bots_to_spectators(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Enabling syncing command and bot messages to spectators...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    server_settings = settings_manager.get_settings(guild.id)
+    new_value = not server_settings.sync_commands_and_bots_to_spectators
+    await settings_manager.set_sync_commands_and_bots_to_spectators(guild.id, new_value)
+    return await ctx.respond(f"{'Enabled' if new_value else 'Disabled'} syncing command and bot messages to spectators")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("minutes", "Minutes to set cooldown to (must be >=5)", type=int)
 @lightbulb.command("set-movement-cooldown", "How many minutes a player has to wait before moving again (must be >= 5 due to discord rate limits)")
 @lightbulb.implements(commands.SlashCommand)
@@ -586,6 +601,7 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         return
     location: str = nullable_location
     chat_channels = get_channels_in_category(guild, category)
+    server_settings = settings_manager.get_settings(guild.id)
     for chat_channel in chat_channels:
         if chat_channel == channel or not isinstance(chat_channel, hikari.GuildTextChannel):
             continue
@@ -609,6 +625,8 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
     display_name = "{} (to {})".format(
         event.message.member.display_name if event.message.member is not None else "???", 
         ", ".join(map(lambda x: x.display_name, other_players_in_channel)) if other_players_in_channel else "nobody else")
+    if (not server_settings.sync_commands_and_bots_to_spectators) and message_is_bot_or_commandlike(event.message):
+        return
     for spectator_webhook in spectator_webhooks:
         if not (spectator_webhook.name == WEBHOOK_NAME and isinstance(spectator_webhook, hikari.ExecutableWebhook)):
             continue

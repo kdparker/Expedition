@@ -416,6 +416,8 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         if not cached_emoji:
             postfix = "gif" if is_only_emote.group(1) else "png"
             content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
+    if message.stickers:
+        content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
     await webhook.execute(
         content=content,
         username=display_name,

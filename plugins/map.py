@@ -404,6 +404,8 @@ async def move(ctx: lightbulb.SlashContext):
 async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message):
     content = message.content or ""
     embeds = message.embeds
+    avatar_url: Union[hikari.UndefinedType, str, hikari.URL] = message.author.avatar_url or hikari.UNDEFINED
+    avatar_url = message.member.guild_avatar_url if message.member and message.member.guild_avatar_url else avatar_url
 
     if ((content.startswith("https://") or content.startswith("http://")) and 
         len(content.split(' ')) == 1 
@@ -421,7 +423,7 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
     await webhook.execute(
         content=content,
         username=display_name,
-        avatar_url=str(message.author.avatar_url) if message.author.avatar_url else hikari.UNDEFINED,
+        avatar_url=avatar_url,
         attachments=message.attachments,
         embeds=embeds,
         mentions_everyone=False,

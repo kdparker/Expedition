@@ -378,8 +378,8 @@ async def move(ctx: lightbulb.SlashContext):
             last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
             next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
             diff = next_possible_movement_time - datetime.datetime.now()
-            if diff.seconds > 0:
-                return await ctx.respond(f"Movement in this map is still on cooldown for {diff.seconds} seconds")
+            if diff.total_seconds() > 0:
+                return await ctx.respond(f"Movement in this map is still on cooldown for {diff.total_seconds()} seconds")
         active_channel = await guildChannelEnforcer.ensure_type(
             get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find your active channel for some reason, please contact admins")
         active_channel_location = await stringEnforcer.ensure_type(

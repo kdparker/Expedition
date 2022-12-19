@@ -294,16 +294,18 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
             content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
     if message.stickers:
         content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
-    print(message.attachments)
-    await webhook.execute(
-        content=content,
-        username=display_name,
-        avatar_url=avatar_url,
-        attachments=message.attachments,
-        embeds=embeds,
-        mentions_everyone=False,
-        flags=message.flags
-    )
+    try:
+        await webhook.execute(
+            content=content,
+            username=display_name,
+            avatar_url=avatar_url,
+            attachments=message.attachments,
+            embeds=embeds,
+            mentions_everyone=False,
+            flags=message.flags
+        )
+    except hikari.errors.BadRequestError as bad_request_error:
+        print(bad_request_error.raw_body)
 
 def message_is_bot_or_commandlike(message: hikari.Message) -> bool:
     return (message.content is not None and message.content[0] in ("=", "!", "/", "?", ".")) or message.author.is_bot

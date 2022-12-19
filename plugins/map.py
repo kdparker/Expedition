@@ -26,6 +26,8 @@ stringEnforcer = TypeEnforcer[str]()
 
 emote_pattern = r'^<(a?):.*:(\d+)>$'
 
+MAX_DISPLAY_NAME_LENGTH = 80
+
 async def get_role_with_name(guild:hikari.Guild, role_name: str, should_fetch: bool = True) -> Optional[hikari.Role]:
     if should_fetch:
         await guild.fetch_roles()
@@ -427,9 +429,9 @@ async def move(ctx: lightbulb.SlashContext):
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
     if nullable_spectator_from_text_channel is not None:
-        await nullable_spectator_from_text_channel.send(f"{player.mention} went to {location}")
+        await nullable_spectator_from_text_channel.send(f"{player.display_name} went to {location}")
     if nullable_spectator_to_text_channel is not None:
-        await nullable_spectator_to_text_channel.send(f"{player.mention} came from {active_channel_location}")
+        await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
 
@@ -625,6 +627,8 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
     display_name = "{} (to {})".format(
         event.message.member.display_name if event.message.member is not None else "???", 
         ", ".join(map(lambda x: x.display_name, other_players_in_channel)) if other_players_in_channel else "nobody else")
+    if len(display_name) >= MAX_DISPLAY_NAME_LENGTH:
+        display_name = display_name[:MAX_DISPLAY_NAME_LENGTH - 4] + "...)"
     if (not server_settings.sync_commands_and_bots_to_spectators) and message_is_bot_or_commandlike(event.message):
         return
     for spectator_webhook in spectator_webhooks:

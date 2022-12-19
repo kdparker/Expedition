@@ -86,7 +86,8 @@ class SettingsManager:
             admin_role_id = str(server_settings.admin_role_id) if server_settings.admin_role_id else "NULL"
             should_track_roles = "1" if server_settings.should_track_roles else "0"
             cooldown_minutes = str(server_settings.cooldown_minutes)
+            sync_commands_and_bots_to_spectators = "1" if server_settings.sync_commands_and_bots_to_spectators else "0"
             await db.execute(
-                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes) VALUES 
-                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes})""")
+                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators) VALUES 
+                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators})""")
             await db.commit()

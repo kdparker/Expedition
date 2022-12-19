@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import hikari
 import lightbulb
@@ -305,7 +306,17 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
             flags=message.flags
         )
     except hikari.errors.BadRequestError as bad_request_error:
-        print(bad_request_error.raw_body)
+        print(message.attachments)
+        asyncio.sleep(0.2)
+        await webhook.execute(
+            content=content,
+            username=display_name,
+            avatar_url=avatar_url,
+            attachments=message.attachments,
+            embeds=embeds,
+            mentions_everyone=False,
+            flags=message.flags
+        )
 
 def message_is_bot_or_commandlike(message: hikari.Message) -> bool:
     return (message.content is not None and message.content[0] in ("=", "!", "/", "?", ".")) or message.author.is_bot

@@ -295,6 +295,7 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
             content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
     if message.stickers:
         content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
+    content = content.replace("<:RPTblank:602609116334129171>", "<:RPTblank:1054538954982035496>")
     await webhook.execute(
         content=content,
         username=display_name,

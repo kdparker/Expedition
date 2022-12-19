@@ -307,7 +307,7 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         )
     except hikari.errors.BadRequestError as bad_request_error:
         print(message.attachments)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(2)
         await webhook.execute(
             content=content,
             username=display_name,

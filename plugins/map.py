@@ -276,6 +276,13 @@ async def set_new_location_role(ctx: lightbulb.SlashContext, player: hikari.Memb
     await player.edit(roles=roles)
     return roles
 
+def replace_rpt_emotes(s: str) -> str:
+    s = s.replace("<:RPTblank:602609116334129171>", "<:RPTblank:1054538954982035496>")
+    s = s.replace("<:NRG:870956313344090142>", "<:NRG:1055177876401573928>")
+    s = s.replace("<:rawmanna:789156956292120576>", "<:rawmanna:1055177874526715904>")
+    s = s.replace("<:RPTmark:604411500744146984>", "<:RPTmark:1055177873109041243>")
+    return s
+
 async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message):
     content = message.content or ""
     embeds = message.embeds
@@ -295,7 +302,11 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
             content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
     if message.stickers:
         content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
-    content = content.replace("<:RPTblank:602609116334129171>", "<:RPTblank:1054538954982035496>")
+    content = replace_rpt_emotes(content)
+    for embed in embeds:
+        embed.description = replace_rpt_emotes(embed.description)
+        for field in embed.fields:
+            field.value = replace_rpt_emotes(field.value)
     await webhook.execute(
         content=content,
         username=display_name,

@@ -316,11 +316,11 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
             content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
     if message.stickers:
         content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
-    content = replace_rpt_emotes(content)
+    content = replace_rpt_emotes(content) if content is not None else None
     for embed in embeds:
-        embed.description = replace_rpt_emotes(embed.description)
+        embed.description = replace_rpt_emotes(embed.description) if embed.description is not None else None
         for field in embed.fields:
-            field.value = replace_rpt_emotes(field.value)
+            field.value = replace_rpt_emotes(field.value) if field.value is not None else None
     await webhook.execute(
         content=content,
         username=display_name,

@@ -146,6 +146,13 @@ async def ensure_spectator_channel(ctx: lightbulb.SlashContext, guild: hikari.Gu
     await ensure_webhook_on_channel(ctx, channel)
     return channel
 
+def get_all_location_channels_for_map(guild: hikari.Guild, map_name: str) -> list[hikari.GuildChannel]:
+    map_chat_category_ids: list[int] = []
+    for channel_id, channel in guild.get_channels().items():
+        if channel.name is not None and f"{map_name}-channels-" in channel.name and (channel.type == hikari.channels.ChannelType.GUILD_CATEGORY):
+            map_chat_category_ids.append(channel.id)
+    return get_channels_in_categories(guild, map_chat_category_ids)
+
 def get_player_location_channels(guild: hikari.Guild, player: hikari.Member, map_name: str) -> list[hikari.GuildChannel]:
     map_chat_category_ids: list[int] = []
     for channel_id, channel in guild.get_channels().items():
@@ -226,19 +233,26 @@ async def ensure_webhook_on_channel(ctx: lightbulb.SlashContext, channel: hikari
     webhook = await ctx.bot.rest.create_webhook(text_channel, WEBHOOK_NAME)
     return webhook
 
+async def get_player_from_location(bot: lightbulb.BotApp, guild: hikari.Guild, location_channel: hikari.GuildChannel) -> Optional[hikari.Member]:
+    channel_permissions = location_channel.permission_overwrites
+    for overwrite_id, permission in channel_permissions.items():
+        if permission.type != hikari.PermissionOverwriteType.MEMBER:
+            continue
+        player_id = permission.id
+        nullable_player = guild.get_member(player_id)
+        channel_player: hikari.Member = nullable_player if nullable_player is not None else await bot.rest.fetch_member(guild.id, player_id)
+        return channel_player
+    return None # player could have left server
+
 async def get_players_in_location(bot: lightbulb.BotApp, guild: hikari.Guild, map_channels: list[hikari.GuildChannel], location:str) -> list[hikari.Member]:
     location_players = []
     for map_channel in map_channels:
         map_channel_location = get_location_channels_location(map_channel)
         if location == map_channel_location:
             channel_permissions = map_channel.permission_overwrites
-            for overwrite_id, permission in channel_permissions.items():
-                if permission.type != hikari.PermissionOverwriteType.MEMBER:
-                    continue
-                player_id = permission.id
-                nullable_player = guild.get_member(player_id)
-                channel_player: hikari.Member = nullable_player if nullable_player is not None else await bot.rest.fetch_member(guild.id, player_id)
-                location_players.append(channel_player)
+            player = await get_player_from_location(bot, guild, map_channel)
+            if player is not None:
+                location_players.append(player)
     return location_players
 
 def find_spectator_channel(guild: hikari.Guild, map_to_use: Map, location: str) -> Optional[hikari.GuildTextChannel]:
@@ -579,6 +593,42 @@ async def add_location(ctx: lightbulb.SlashContext):
     category = await ensure_category_exists(guild, f"{result_map.name}-spectator")
     await ensure_spectator_channel(ctx, guild, category, result_map, location_name)
     await ctx.respond(f"Added {location_name} to {map_name}")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("location-name", "Name of the location to remove from the map", type=str)
+@lightbulb.option("map-name", "Name of the map the location will be removed from", type=str)
+@lightbulb.command("remove-location", "Remove the named location from the given map")
+@lightbulb.implements(commands.SlashCommand)
+async def remove_location(ctx: lightbulb.SlashContext):
+    map_name = ctx.options["map-name"].lower()
+    location_name = ctx.options["location-name"].lower()
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing location...", flags=hikari.MessageFlag.EPHEMERAL)
+    guild = await get_guild(ctx)
+    result_map = await atlas.remove_location(guild.id, map_name, location_name)
+    server_settings = settings_manager.get_settings(guild.id)
+    if result_map is None:
+        return await ctx.respond(f"Failed to remove {location_name} from {map_name}, this could be because the map doesn't exist or because the location doesn't exist in it")
+    async with result_map.cond:
+        location_channels = get_all_location_channels_for_map(guild, result_map.name)
+        for location_channel in location_channels:
+            if f"-{location_name}" not in location_channel.name:
+                continue
+            default_location = result_map.locations[0]
+            nullable_player = await get_player_from_location(ctx.bot, guild, location_channel)
+            if nullable_player is None:
+                continue
+            player: hikari.Member = nullable_player
+            try:
+                await location_channel.edit(name=get_player_location_name(player, default_location))
+            except hikari.RateLimitedError as e:
+                await ctx.respond(f"{get_sanitized_player_name(player)} moving too quickly for discord rate limits, get them to move in {e.retry_after} seconds")
+            nullable_spectator_to_text_channel = find_spectator_channel(guild, result_map, default_location)
+            if nullable_spectator_to_text_channel is not None:
+                await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {location_name}")
+            if server_settings.should_track_roles:
+                await set_new_location_role(ctx, player, guild, result_map.name, default_location)    
+    await ctx.respond(f"Removed {location_name} from {map_name}")
 
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):

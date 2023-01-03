@@ -69,6 +69,19 @@ class Atlas:
         fetched_map.locations.append(location_name)
         await self._save_map(server_id, fetched_map)
         return fetched_map
+
+    async def remove_location(self, server_id: int, map_name: str, location_name: str) -> Optional[Map]:
+        server_atlas = self._server_atlases.get(server_id, None)
+        if server_atlas is None:
+            return None
+        fetched_map = server_atlas.get_map(map_name.lower())
+        if fetched_map is None:
+            return None
+        if location_name not in fetched_map.locations:
+            return None
+        fetched_map.locations.remove(location_name.lower())
+        await self._save_map(server_id, fetched_map)
+        return fetched_map
             
     def __str__(self) -> str:
         output = []

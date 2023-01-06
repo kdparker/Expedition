@@ -321,11 +321,13 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         embed.description = replace_rpt_emotes(embed.description) if embed.description is not None else None
         for field in embed.fields:
             field.value = replace_rpt_emotes(field.value) if field.value is not None else None
+
     await webhook.execute(
         content=content,
         username=display_name,
         avatar_url=avatar_url,
         attachments=message.attachments,
+        user_mentions=message.user_mentions_ids,
         embeds=embeds,
         mentions_everyone=False,
         flags=message.flags

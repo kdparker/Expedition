@@ -632,26 +632,57 @@ async def remove_location(ctx: lightbulb.SlashContext):
                 await set_new_location_role(ctx, player, guild, result_map.name, default_location)    
     await ctx.respond(f"Removed {location_name} from {map_name}")
 
+async def prod_yell(ctx: lightbulb.SlashContext, guild: hikari.Guild, member: hikari.Member):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Yelling for you...", flags=hikari.MessageFlag.EPHEMERAL)
+    error_message = "Can't find which map you want to yell in, run the command in a player's channel"
+    category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+    category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+    map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+    server_maps = atlas.get_maps_in_server(guild.id)
+    filtered_maps = list(filter(lambda map: map.name == map_name, server_maps))
+    if len(filtered_maps) != 1:
+        return await ctx.respond("Can't find which map you want to yell in, contact Keegan, code prod_yell:10")
+    map_to_use = filtered_maps[0]
+    async with map_to_use.cond:
+        location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
+        locations_yelled_in_for_specs = []
+        for location_channel in location_channels:
+            location = get_location_channels_location(location_channel)
+            message = f"{member.display_name} yelled {ctx.options['message']}"
+            nullable_spectator_channel = find_spectator_channel(guild, map_to_use, location)
+            if nullable_spectator_channel is not None and location not in locations_yelled_in_for_specs:
+                specator_channel = nullable_spectator_channel
+                await specator_channel.send(message, mentions_everyone=False)
+                locations_yelled_in_for_specs.append(location)
+            await location_channel.send(message, mentions_everyone=False)
+        await ctx.respond(f"You yelled {ctx.options['message']}")
+
+
 @plugin.command
 @lightbulb.option("message", "The message you want to yell to all locations", type=str)
 @lightbulb.command("yell", "Yell a particular message to all locations, will announce where you are")
 @lightbulb.implements(commands.SlashCommand)
 async def yell(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Moving you...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
     maps_player_is_in = get_maps_player_is_in(guild, player)
+    settings = settings_manager.get_settings(guild.id)
     if not maps_player_is_in:
-        return await ctx.respond("Cannot move when you're not in a map")
+        if settings.admin_role_id in player.role_ids:
+            return await prod_yell(ctx, guild, player)
+        return await ctx.respond("Cannot yell when you're not in a map")
     map_to_use = maps_player_is_in[0]
     if len(maps_player_is_in) >= 2:
-        error_message = "Since you are in two maps, we need you to use the move command in the map you want to move in"
+        error_message = "Since you are in two maps, we need you to use the yell command in the map you want to yell in"
         category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
         category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
         map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
         if map_name not in map(lambda m: m.name, maps_player_is_in):
+            if settings.admin_role_id in player.role_ids:
+                return await prod_yell(ctx, guild, player)
             return await ctx.respond(error_message)
         map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Yelling...", flags=hikari.MessageFlag.LOADING)
     async with map_to_use.cond:
         active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
         active_location = get_location_channels_location(active_channel)

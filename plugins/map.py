@@ -343,7 +343,7 @@ def message_is_bot_or_commandlike(message: hikari.Message) -> bool:
 @lightbulb.command("create-map", "Creates a map with the given name, and the locations (comma-separated)")
 @lightbulb.implements(commands.SlashCommand)
 async def create_map(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding map...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding map...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     map_name = ctx.options['map-name'].lower()
     locations = list(map(lambda location: location.strip(), ctx.options['locations'].split(',')))
@@ -368,7 +368,7 @@ async def create_map(ctx: lightbulb.SlashContext):
 @lightbulb.command("add-player", "Adds the given member to the given map, placing them in the map's default location")
 @lightbulb.implements(commands.SlashCommand)
 async def add_player(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding player to map...", flags=hikari.MessageFlag.LOADING)
     map_name = ctx.options["map-name"].lower()
     guild = await get_guild(ctx)
     player = await memberEnforcer.ensure_type(ctx.options['player'], ctx, "Somehow couldn't get player from the command")
@@ -392,7 +392,7 @@ async def add_player(ctx: lightbulb.SlashContext):
 @lightbulb.command("remove-player", 'Removes the given member from the given map, deleting "their" channels')
 @lightbulb.implements(commands.SlashCommand)
 async def remove_player(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing player from map...", flags=hikari.MessageFlag.LOADING)
     map_name = ctx.options["map-name"].lower()
     guild = await get_guild(ctx)
     player = ctx.options['player']
@@ -500,7 +500,7 @@ async def whos_here(ctx: lightbulb.SlashContext):
 @lightbulb.command("spectator-role", "Set role that all subsequently created channels will have that role as a spectator")
 @lightbulb.implements(commands.SlashCommand)
 async def spectator_role(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting spectator role id...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting spectator role id...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     role: hikari.Role = ctx.options['role']
     await settings_manager.set_spectator_role_id(guild.id, role.id)
@@ -512,7 +512,7 @@ async def spectator_role(ctx: lightbulb.SlashContext):
 @lightbulb.command("admin-role", "Set role that all subsequently created channels will have that role as an admin")
 @lightbulb.implements(commands.SlashCommand)
 async def admin_role(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting admin role id...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting admin role id...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     role: hikari.Role = ctx.options['role']
     await settings_manager.set_admin_role_id(guild.id, role.id)
@@ -523,7 +523,7 @@ async def admin_role(ctx: lightbulb.SlashContext):
 @lightbulb.command("enable-role-tracking", "Players added to a map will get roles matching to the locations they are in with this enabled")
 @lightbulb.implements(commands.SlashCommand)
 async def enable_role_tracking(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Enabling role tracking...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Enabling role tracking...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     await settings_manager.set_should_track_roles(guild.id, True)
     return await ctx.respond(f"Enabled role tracking")
@@ -533,7 +533,7 @@ async def enable_role_tracking(ctx: lightbulb.SlashContext):
 @lightbulb.command("disable-role-tracking", "Players added to a map will not get roles matching to the locations they are in with this disabled")
 @lightbulb.implements(commands.SlashCommand)
 async def disable_role_tracking(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Disabling role tracking...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Disabling role tracking...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     await settings_manager.set_should_track_roles(guild.id, False)
     return await ctx.respond(f"Disabled role tracking")
@@ -543,7 +543,7 @@ async def disable_role_tracking(ctx: lightbulb.SlashContext):
 @lightbulb.command("toggle-bot-and-command-mirroring", "Turns on/off command like and bot messages mirroring to spectator channels, default on")
 @lightbulb.implements(commands.SlashCommand)
 async def toggle_sync_commands_and_bots_to_spectators(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Enabling syncing command and bot messages to spectators...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Enabling syncing command and bot messages to spectators...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     server_settings = settings_manager.get_settings(guild.id)
     new_value = not server_settings.sync_commands_and_bots_to_spectators
@@ -556,7 +556,7 @@ async def toggle_sync_commands_and_bots_to_spectators(ctx: lightbulb.SlashContex
 @lightbulb.command("set-movement-cooldown", "How many minutes a player has to wait before moving again (must be >= 5 due to discord rate limits)")
 @lightbulb.implements(commands.SlashCommand)
 async def set_movement_cooldown(ctx: lightbulb.SlashContext):
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.LOADING)
     minutes = ctx.options['minutes']
     if minutes < 5:
         return await ctx.respond("The cooldown must be greater than 5 minutes due to discord rate limits on editing channels")
@@ -571,7 +571,7 @@ async def set_movement_cooldown(ctx: lightbulb.SlashContext):
 @lightbulb.implements(commands.SlashCommand)
 async def prepopulate_roles(ctx: lightbulb.SlashContext):
     map_name = ctx.options["map-name"].lower()
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Prepopulating roles tracking...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Prepopulating roles tracking...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     map = await mapEnforcer.ensure_type(atlas.get_map(guild.id, map_name), ctx, "Cannot find map with the chosen name")
     for location in map.locations:
@@ -587,7 +587,7 @@ async def prepopulate_roles(ctx: lightbulb.SlashContext):
 async def add_location(ctx: lightbulb.SlashContext):
     map_name = ctx.options["map-name"].lower()
     location_name = ctx.options["location-name"].lower()
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding location...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding location...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     result_map = await atlas.add_location(guild.id, map_name, location_name)
     if result_map is None:
@@ -605,7 +605,7 @@ async def add_location(ctx: lightbulb.SlashContext):
 async def remove_location(ctx: lightbulb.SlashContext):
     map_name = ctx.options["map-name"].lower()
     location_name = ctx.options["location-name"].lower()
-    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing location...", flags=hikari.MessageFlag.EPHEMERAL)
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Removing location...", flags=hikari.MessageFlag.LOADING)
     guild = await get_guild(ctx)
     result_map = await atlas.remove_location(guild.id, map_name, location_name)
     server_settings = settings_manager.get_settings(guild.id)
@@ -632,6 +632,43 @@ async def remove_location(ctx: lightbulb.SlashContext):
                 await set_new_location_role(ctx, player, guild, result_map.name, default_location)    
     await ctx.respond(f"Removed {location_name} from {map_name}")
 
+@plugin.command
+@lightbulb.option("message", "The message you want to yell to all locations", type=str)
+@lightbulb.command("yell", "Yell a particular message to all locations, will announce where you are")
+@lightbulb.implements(commands.SlashCommand)
+async def yell(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Moving you...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
+    maps_player_is_in = get_maps_player_is_in(guild, player)
+    if not maps_player_is_in:
+        return await ctx.respond("Cannot move when you're not in a map")
+    map_to_use = maps_player_is_in[0]
+    if len(maps_player_is_in) >= 2:
+        error_message = "Since you are in two maps, we need you to use the move command in the map you want to move in"
+        category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+        category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+        map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+        if map_name not in map(lambda m: m.name, maps_player_is_in):
+            return await ctx.respond(error_message)
+        map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    async with map_to_use.cond:
+        active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
+        active_location = get_location_channels_location(active_channel)
+        location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
+        locations_yelled_in_for_specs = []
+        for location_channel in location_channels:
+            location = get_location_channels_location(location_channel)
+            message = f"{player.display_name} yelled {ctx.options['message']}{' from ' + active_location if location.lower() != active_location.lower() else ''}"
+            nullable_spectator_channel = find_spectator_channel(guild, map_to_use, location)
+            if nullable_spectator_channel is not None and location not in locations_yelled_in_for_specs:
+                specator_channel = nullable_spectator_channel
+                await specator_channel.send(message, mentions_everyone=False)
+                locations_yelled_in_for_specs.append(location)
+            if location_channel.id != active_channel.id:
+                await location_channel.send(message, mentions_everyone=False)
+        await ctx.respond(f"You yelled {ctx.options['message']}")
+        
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
     bot = plugin.bot

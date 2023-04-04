@@ -672,7 +672,8 @@ async def yell(ctx: lightbulb.SlashContext):
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
     bot = plugin.bot
-    if event.is_webhook:
+    
+    if event.is_webhook or event.author_id == bot.get_me().id:
         return
     if event.message.guild_id is None:
         return

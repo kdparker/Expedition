@@ -708,6 +708,8 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         return
     if event.message.guild_id is None:
         return
+    if event.message.author.id == 1121647528757178418: # flint
+        return
     nullable_guild = bot.cache.get_available_guild(event.message.guild_id)
     if nullable_guild is None:
         return

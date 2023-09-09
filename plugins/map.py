@@ -492,7 +492,8 @@ async def whos_here(ctx: lightbulb.SlashContext):
     location_players = await get_players_in_location(ctx.bot, guild, map_channels, location)
     if len(location_players) <= 1:
         return await ctx.respond(f"You're the only one in {location}")
-    return await ctx.respond(f"{', '.join(map(lambda p: f"{p.mention} ({p.display_name})", location_players))} are in {location}")
+    players_string = ', '.join(map(lambda p: f"{p.mention} ({p.display_name})", location_players))
+    return await ctx.respond(f"{players_string} are in {location}")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))

@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import hikari
 import lightbulb
+import random
 import re
 
 from lightbulb import commands
@@ -387,6 +388,20 @@ async def add_player(ctx: lightbulb.SlashContext):
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("map-name", "Name of the map where talking will be toggled", type=str)
+@lightbulb.command("toggle-talking", "Toggles whether talking is disabled/enabled in a given map")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_talking(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Toggling talking on the map...", flags=hikari.MessageFlag.LOADING)
+    map_name = ctx.options["map-name"].lower()
+    guild = await get_guild(ctx)
+    result = await atlas.toggle_talking(guild.id, map_name)
+    if result is None:
+        return await ctx.respond(f"Something went wrong, unsure of current state of talking in {map_name}")
+    await ctx.respond(f"Talking in {map_name} is now {'on' if result else 'off'}")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("player", "Member you want to remove from the given map", type=hikari.Member)
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
 @lightbulb.command("remove-player", 'Removes the given member from the given map, deleting "their" channels')
@@ -567,6 +582,54 @@ async def set_movement_cooldown(ctx: lightbulb.SlashContext):
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("toggle-yelling", "Turn on/off the ability for players to yell")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_yelling(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Toggling yelling...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    server_settings = settings_manager.get_settings(guild.id)
+    new_value = not server_settings.yell_enabled
+    await settings_manager.set_yell_enabled(guild.id, new_value)
+    return await ctx.respond(f"{'Enabled' if new_value else 'Disabled'} yelling")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("seconds", "Seconds to set cooldown to (0 means no cooldown, which is default)", type=int)
+@lightbulb.command("set-yell-cooldown", "How many seconds a player has to wait between yelling")
+@lightbulb.implements(commands.SlashCommand)
+async def set_yell_cooldown(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.LOADING)
+    seconds = ctx.options['seconds']
+    guild = await get_guild(ctx)
+    await settings_manager.set_yell_cooldown_seconds(guild.id, seconds)
+    return await ctx.respond(f"Cooldown set")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("toggle-whispering", "Turn on/off the ability for players to whisper")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_whispering(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Toggling whispering...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    server_settings = settings_manager.get_settings(guild.id)
+    new_value = not server_settings.whisper_enabled
+    await settings_manager.set_whisper_enabled(guild.id, new_value)
+    return await ctx.respond(f"{'Enabled' if new_value else 'Disabled'} whispering")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("percentage", "Percent chance to be overheard", type=int)
+@lightbulb.command("set-whisper-percentage", "Set how likely it is for a person to be overheard when whispering")
+@lightbulb.implements(commands.SlashCommand)
+async def set_whisper_percentage(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting whisper percentage...", flags=hikari.MessageFlag.LOADING)
+    percentage = ctx.options['percentage']
+    guild = await get_guild(ctx)
+    await settings_manager.set_whisper_percentage(guild.id, percentage)
+    return await ctx.respond(f"Percentage set")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
 @lightbulb.command("prepopulate-roles", "Create all roles for a map without needing to go there, useful for setting up for a season")
 @lightbulb.implements(commands.SlashCommand)
@@ -672,6 +735,10 @@ async def yell(ctx: lightbulb.SlashContext):
         if settings.admin_role_id in player.role_ids:
             return await prod_yell(ctx, guild, player)
         return await ctx.respond("Cannot yell when you're not in a map")
+    if not settings.yell_enabled:
+        if settings.admin_role_id in player.role_ids:
+            return await prod_yell(ctx, guild, player)
+        return await ctx.respond("Yelling is currently disabled")
     map_to_use = maps_player_is_in[0]
     if len(maps_player_is_in) >= 2:
         error_message = "Since you are in two maps, we need you to use the yell command in the map you want to yell in"
@@ -683,6 +750,15 @@ async def yell(ctx: lightbulb.SlashContext):
                 return await prod_yell(ctx, guild, player)
             return await ctx.respond(error_message)
         map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    if not map_to_use.talking_enabled:
+        return await ctx.respond(f"Talking is turned off in {map_to_use.name}")
+    if settings.yell_cooldown_seconds > 0:
+        if player.id in map_to_use.yell_cooldowns:
+            last_movement_time: datetime.datetime = map_to_use.yell_cooldowns[player.id]
+            next_possible_movement_time = last_movement_time + datetime.timedelta(seconds=settings.yell_cooldown_seconds)
+            diff = next_possible_movement_time - datetime.datetime.now()
+            if diff.total_seconds() > 0:
+                return await ctx.respond(f"Yelling in this map is still on cooldown for {diff.total_seconds()} seconds")
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Yelling...", flags=hikari.MessageFlag.LOADING)
     async with map_to_use.cond:
         active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
@@ -699,8 +775,73 @@ async def yell(ctx: lightbulb.SlashContext):
                 locations_yelled_in_for_specs.append(location)
             if location_channel.id != active_channel.id:
                 await location_channel.send(message, mentions_everyone=False)
+        map_to_use.reset_yell_cooldown(player.id)
         await ctx.respond(f"You yelled {ctx.options['message']}")
-        
+
+@plugin.command
+@lightbulb.option("message", "The message you want to whisper", type=str)
+@lightbulb.option("player", "The message you want to whisper to", type=hikari.Member)
+@lightbulb.command("whisper", "Whisper to a player, you may be overheard by the others in the location without knowing.")
+@lightbulb.implements(commands.SlashCommand)
+async def whisper(ctx: lightbulb.SlashContext):
+    guild = await get_guild(ctx)
+    player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
+    target = await memberEnforcer.ensure_type(ctx.options['player'], ctx, "Invalid target")
+    if player.id == target.id:
+        return await ctx.respond("You cannot whisper to yourself")
+    maps_player_is_in = get_maps_player_is_in(guild, player)
+    maps_target_is_in = get_maps_player_is_in(guild, target)
+    settings = settings_manager.get_settings(guild.id)
+    if not maps_player_is_in:
+        return await ctx.respond("Cannot whisper when you're not in a map")
+    if not settings.whisper_enabled:
+        return await ctx.respond("Whispering is currently disabled")
+    map_to_use = maps_player_is_in[0]
+    if len(maps_player_is_in) >= 2:
+        error_message = "Since you are in two maps, we need you to use the whisper command in the map you want to yell in"
+        category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+        category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+        map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+        if map_name not in map(lambda m: m.name, maps_player_is_in):
+            if settings.admin_role_id in player.role_ids:
+                return await prod_yell(ctx, guild, player)
+            return await ctx.respond(error_message)
+        map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    if not map_to_use.talking_enabled:
+        return await ctx.respond(f"Talking is turned off in {map_to_use.name}")
+    if map_to_use not in maps_target_is_in:
+        return await ctx.respond(f"Target is not in {map_to_use.name}")
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Whispering...", flags=hikari.MessageFlag.LOADING)
+    async with map_to_use.cond:
+        active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
+        target_active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, target, map_to_use), ctx, "Can't find targets's active channel in the map")
+        active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Can't find where you are somehow, contact an admin")
+        target_active_location = get_location_channels_location(target_active_channel)
+        if active_location != target_active_location:
+            return await ctx.respond(f"You must be in the same location as {target.mention} to whisper to them.")
+        await target_active_channel.send(f"{player.mention} whispered to you:\n\n{ctx.options['message']}")
+        was_overheard = settings.whisper_percentage > 0 and random.randint(1, 100) <= settings.whisper_percentage
+        if was_overheard:
+            nullable_category = get_category_of_channel(guild, active_channel.id)  
+            if nullable_category is None:
+                return
+            map_category: hikari.GuildChannel = nullable_category
+            chat_channels = get_channels_in_category(guild, map_category)
+            for chat_channel in chat_channels:
+                if chat_channel == active_channel or chat_channel == target_active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+                    continue
+                chat_text_channel: hikari.GuildTextChannel = chat_channel
+                chat_channel_location = get_location_channels_location(chat_text_channel)
+                if chat_channel_location == active_location:
+                    await chat_channel.send(f"You overheard {player.mention} whisper to {target.mention}:\n\n{ctx.options['message']}")
+        nullable_spectator_text_channel = find_spectator_channel(guild, map_to_use, active_location)
+        if nullable_spectator_text_channel is None:
+            return
+        spectator_text_channel: hikari.GuildTextChannel = nullable_spectator_text_channel
+        overheard_text = " (and overheard by everyone else)" if was_overheard else ""
+        await spectator_text_channel.send(f"{player.mention} whispered{overheard_text} to {target.mention}:\n\n{ctx.options['message']}")
+        await ctx.respond(f"You whispered to {target.mention}:\n\n{ctx.options['message']}")
+
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
     bot = plugin.bot
@@ -734,6 +875,8 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
     if nullable_fetched_map is None:
         return
     fetched_map: Map = nullable_fetched_map
+    if not fetched_map.talking_enabled:
+        return await event.message.respond("Talking here is off right now.")
     nullable_location = get_location_channels_location(channel)
     if nullable_location is None:
         return

@@ -16,6 +16,11 @@ class ServerSettings:
     should_track_roles: bool = False
     cooldown_minutes: int = 5
     sync_commands_and_bots_to_spectators: bool = True
+    yell_enabled: bool = True
+    yell_cooldown_seconds: int = 0
+    whisper_enabled: bool = True
+    whisper_percentage: int = 10
+
     
 class SettingsManager:
     def __init__(self) -> None:
@@ -58,6 +63,34 @@ class SettingsManager:
         self._settings_dict[server_id] = server_settings
         await self._update_settings(server_settings)
         return server_settings
+    
+    async def set_yell_enabled(self, server_id: int, yell_enabled: bool) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.yell_enabled = yell_enabled
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+
+    async def set_yell_cooldown_seconds(self, server_id: int, yell_cooldown_seconds: int) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.yell_cooldown_seconds = yell_cooldown_seconds
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
+    async def set_whisper_enabled(self, server_id: int, whisper_enabled: bool) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.whisper_enabled = whisper_enabled
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
+    async def set_whisper_percentage(self, server_id: int, whisper_percentage: int) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.whisper_percentage = whisper_percentage
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
 
     async def load_from_db(self) -> SettingsManager:
         async with aiosqlite.connect(consts.SQLITE_DB) as db:
@@ -67,7 +100,11 @@ class SettingsManager:
             SHOULD_TRACK_ROLES = 3
             COOLDOWN_MINUTES = 4
             SYNC_COMMANDS = 5
-            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators FROM server_settings") as cursor:
+            YELL_ENABLED = 6
+            YELL_COOLDOWN_SECONDS = 7
+            WHISPER_ENABLED = 8
+            WHISPER_PERCENTAGE = 9
+            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage FROM server_settings") as cursor:
                 async for row in cursor:
                     server_id = row[SERVER_ID]
                     spectator_role_id = row[SPECTATOR_ROLE_ID]
@@ -75,7 +112,11 @@ class SettingsManager:
                     should_track_roles = True if row[SHOULD_TRACK_ROLES] else False
                     cooldown_minutes = row[COOLDOWN_MINUTES]
                     sync_commands_and_bots_to_spectators = True if row[SYNC_COMMANDS] else False
-                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators)
+                    yell_enabled = True if row[YELL_ENABLED] else False
+                    yell_cooldown_seconds = row[YELL_COOLDOWN_SECONDS]
+                    whisper_enabled = True if row[WHISPER_ENABLED] else False
+                    whisper_percentage = row[WHISPER_PERCENTAGE]
+                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage)
                     self._settings_dict[server_id] = server_settings
         return self
 
@@ -86,8 +127,12 @@ class SettingsManager:
             admin_role_id = str(server_settings.admin_role_id) if server_settings.admin_role_id else "NULL"
             should_track_roles = "1" if server_settings.should_track_roles else "0"
             cooldown_minutes = str(server_settings.cooldown_minutes)
+            yell_enabled = "1" if server_settings.yell_enabled else "0"
+            yell_cooldown_seconds = str(server_settings.yell_cooldown_seconds)
+            whisper_enabled = "1" if server_settings.whisper_enabled else "0"
+            whisper_percentage = str(server_settings.whisper_percentage)
             sync_commands_and_bots_to_spectators = "1" if server_settings.sync_commands_and_bots_to_spectators else "0"
             await db.execute(
-                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators) VALUES 
-                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators})""")
+                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage) VALUES 
+                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators}, {yell_enabled}, {yell_cooldown_seconds}, {whisper_enabled}, {whisper_percentage})""")
             await db.commit()

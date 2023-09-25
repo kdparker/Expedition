@@ -62,6 +62,10 @@ ADD_WHISPER_PERCENTAGE_SERVER_SETTING = """
 ALTER TABLE server_settings ADD COLUMN whisper_percentage INT NOT NULL DEFAULT 10;
 """
 
+ADD_WHISPER_COOLDOWN_SECONDS_SERVER_SETTING = """
+ALTER TABLE server_settings ADD COLUMN whisper_cooldown_seconds INT NOT NULL DEFAULT 0;
+"""
+
 async def create_table():
     async with aiosqlite.connect(consts.SQLITE_DB) as db:
         await db.execute(CREATE_LOCATIONS_QUERY)
@@ -93,6 +97,10 @@ async def create_table():
             print(e)
         try:
             await db.execute(ADD_WHISPER_PERCENTAGE_SERVER_SETTING)
+        except Exception as e:
+            print(e)
+        try:
+            await db.execute(ADD_WHISPER_COOLDOWN_SECONDS_SERVER_SETTING)
         except Exception as e:
             print(e)
         await db.commit()

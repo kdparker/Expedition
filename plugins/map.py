@@ -638,6 +638,18 @@ async def set_whisper_percentage(ctx: lightbulb.SlashContext):
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("seconds", "Seconds to set cooldown to (0 means no cooldown, which is default)", type=int)
+@lightbulb.command("set-whisper-cooldown", "How many seconds a player has to wait between whipsering")
+@lightbulb.implements(commands.SlashCommand)
+async def set_whisper_cooldown(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.LOADING)
+    seconds = ctx.options['seconds']
+    guild = await get_guild(ctx)
+    await settings_manager.set_whisper_cooldown_seconds(guild.id, seconds)
+    return await ctx.respond(f"Cooldown set")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
 @lightbulb.command("prepopulate-roles", "Create all roles for a map without needing to go there, useful for setting up for a season")
 @lightbulb.implements(commands.SlashCommand)
@@ -819,6 +831,13 @@ async def whisper(ctx: lightbulb.SlashContext):
         return await ctx.respond(f"Talking is turned off in {map_to_use.name}")
     if map_to_use not in maps_target_is_in:
         return await ctx.respond(f"Target is not in {map_to_use.name}")
+    if settings.whisper_cooldown_seconds > 0:
+        if player.id in map_to_use.whisper_cooldowns:
+            last_movement_time: datetime.datetime = map_to_use.whisper_cooldowns[player.id]
+            next_possible_movement_time = last_movement_time + datetime.timedelta(seconds=settings.whisper_cooldown_seconds)
+            diff = next_possible_movement_time - datetime.datetime.now()
+            if diff.total_seconds() > 0:
+                return await ctx.respond(f"Whispering in this map is still on cooldown for {diff.total_seconds()} seconds")
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Whispering...", flags=hikari.MessageFlag.LOADING)
     async with map_to_use.cond:
         active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
@@ -848,6 +867,7 @@ async def whisper(ctx: lightbulb.SlashContext):
         spectator_text_channel: hikari.GuildTextChannel = nullable_spectator_text_channel
         overheard_text = " (and overheard by everyone else)" if was_overheard else ""
         await spectator_text_channel.send(f"{player.mention} whispered{overheard_text} to {target.mention}:\n\n{ctx.options['message']}")
+        map_to_use.reset_whisper_cooldown(player.id)
         await ctx.respond(f"You whispered to {target.mention}:\n\n{ctx.options['message']}")
 
 @plugin.command

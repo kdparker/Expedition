@@ -14,6 +14,7 @@ class Map:
         self.locations = locations
         self.cooldowns: dict[int, datetime.datetime] = {}
         self.yell_cooldowns: dict[int, datetime.datetime] = {}
+        self.whisper_cooldowns: dict[int, datetime.datetime] = {}
         self.cond = asyncio.Condition()
         self.talking_enabled = talking_enabled
         self.role_requirements: dict[str, set[int]] = {}
@@ -26,6 +27,9 @@ class Map:
 
     def reset_yell_cooldown(self, player_id: int) -> datetime.datetime:
         self.yell_cooldowns[player_id] = datetime.datetime.now()
+
+    def reset_whisper_cooldown(self, player_id: int) -> datetime.datetime:
+        self.whisper_cooldowns[player_id] = datetime.datetime.now()
 
     def add_role_requirement(self, location: str, role_id: int):
         roles = self.role_requirements.get(location, set())

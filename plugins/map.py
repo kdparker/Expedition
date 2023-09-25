@@ -452,6 +452,14 @@ async def move(ctx: lightbulb.SlashContext):
     async with map_to_use.cond:
         if location not in map_to_use.locations:
             return await ctx.respond(f"{location} is not in the map you are moving in")
+        if location in map_to_use.role_requirements:
+            found_good_role = False
+            for role_id in player.role_ids:
+                if role_id in map_to_use.role_requirements[location]:
+                    found_good_role = True
+                    break
+            if not found_good_role:
+                return await ctx.respond(f"You do not have the necessary role to enter {location}")
         if player.id in map_to_use.cooldowns:
             last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
             next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
@@ -841,6 +849,41 @@ async def whisper(ctx: lightbulb.SlashContext):
         overheard_text = " (and overheard by everyone else)" if was_overheard else ""
         await spectator_text_channel.send(f"{player.mention} whispered{overheard_text} to {target.mention}:\n\n{ctx.options['message']}")
         await ctx.respond(f"You whispered to {target.mention}:\n\n{ctx.options['message']}")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("role", "Role a player must have to visit the location", type=hikari.Role)
+@lightbulb.option("location-name", "Name of location to attach the role to", type=str)
+@lightbulb.option("map-name", "Name of the map the location will have a role attached to", type=str)
+@lightbulb.command("add-role-to-location", "Add a role a player must have to enter a particular location")
+@lightbulb.implements(commands.SlashCommand)
+async def add_role_to_location(ctx: lightbulb.SlashContext):
+    map_name = ctx.options["map-name"].lower()
+    location_name = ctx.options["location-name"].lower()
+    role = ctx.options["role"]
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding role to location...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    possible_map = await atlas.add_role(guild.id, map_name, location_name, role.id)
+    if possible_map is None:
+        return await ctx.respond("Could not attach the role to the map and location - do they both exist?")
+    return await ctx.respond(f"Attached {role.mention} to {location_name} in {map_name}")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("location-name", "Name of location to remove required roles from", type=str)
+@lightbulb.option("map-name", "Name of the map the location will have no more roles attached to", type=str)
+@lightbulb.command("remove-roles-from-location", "Remove all attached roles from a particular location")
+@lightbulb.implements(commands.SlashCommand)
+async def remove_roles_from_location(ctx: lightbulb.SlashContext):
+    map_name = ctx.options["map-name"].lower()
+    location_name = ctx.options["location-name"].lower()
+    role = ctx.options["role"]
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Adding role to location...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    possible_map = await atlas.remove_roles(guild.id, map_name, location_name)
+    if possible_map is None:
+        return await ctx.respond("Could not remove the roles to the map and location - do they both exist?")
+    return await ctx.respond(f"Removed roles from {location_name} in {map_name}")
 
 @plugin.listener(hikari.MessageCreateEvent, bind=True) # type: ignore[misc]
 async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):

@@ -67,6 +67,20 @@ async def get_guild(ctx: lightbulb.SlashContext) -> hikari.Guild:
 async def get_map(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_name: str) -> Map:
     return await mapEnforcer.ensure_type(atlas.get_map(guild.id, map_name), ctx, f"Could not find map under name {map_name}")
 
+def get_flint_log_channel(guild: hikari.Guild) -> Optional[hikari.GuildChannel]:
+    for channel_id, channel in guild.get_channels().items():
+        if channel.name == "flint-log" and channel.type == hikari.ChannelType.GUILD_TEXT:
+            return channel
+    return None
+
+async def log_action_to_flint(ctx: lightbulb.SlashContext, action: str, player: hikari.User):
+    print(action, player)
+    guild = await get_guild(ctx)
+    flint_log_channel = get_flint_log_channel(guild)
+    if flint_log_channel is None:
+        return
+    await flint_log_channel.send(f"{player.mention} {action}")
+
 def get_channels_in_category(guild: hikari.Guild, category: hikari.GuildChannel) -> list[hikari.GuildChannel]:
     channels = []
     for channel_id, channel, in guild.get_channels().items():
@@ -486,6 +500,7 @@ async def move(ctx: lightbulb.SlashContext):
         await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
+    await log_action_to_flint(ctx, "move", player)
 
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")
@@ -832,6 +847,7 @@ async def yell(ctx: lightbulb.SlashContext):
             if location_channel.id != active_channel.id:
                 await location_channel.send(message, mentions_everyone=False)
         map_to_use.reset_yell_cooldown(player.id)
+        await log_action_to_flint(ctx, "yell", player)
         await ctx.respond(f"You yelled {ctx.options['message']}")
 
 @plugin.command
@@ -904,6 +920,7 @@ async def whisper(ctx: lightbulb.SlashContext):
         overheard_text = " (and overheard by everyone else)" if was_overheard else ""
         await spectator_text_channel.send(f"{player.mention} whispered{overheard_text} to {target.mention}:\n\n{ctx.options['message']}")
         map_to_use.reset_whisper_cooldown(player.id)
+        await log_action_to_flint(ctx, "whisper", player)
         await ctx.respond(f"You whispered to {target.mention}:\n\n{ctx.options['message']}")
     
 @plugin.command
@@ -962,6 +979,7 @@ async def peek(ctx: lightbulb.SlashContext):
                 if chat_channel_location == target_location:
                     await chat_channel.send(f"You saw {player.mention} ({player.display_name}) peek in to {target_location}")
         map_to_use.reset_peek_cooldown(player.id)
+        await log_action_to_flint(ctx, "peek", player)
         map_channels = get_channels_in_category(guild, category)
         location_players = await get_players_in_location(ctx.bot, guild, map_channels, target_location)
         if len(location_players) == 0:

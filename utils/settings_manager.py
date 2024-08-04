@@ -21,6 +21,9 @@ class ServerSettings:
     whisper_enabled: bool = True
     whisper_percentage: int = 10
     whisper_cooldown_seconds: int = 0
+    peek_enabled: bool = False
+    peek_percentage: int = 10
+    peek_cooldown_seconds: int = 0
 
     
 class SettingsManager:
@@ -100,6 +103,27 @@ class SettingsManager:
         await self._update_settings(server_settings)
         return server_settings
 
+    async def set_peek_enabled(self, server_id: int, peek_enabled: bool) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.peek_enabled = peek_enabled
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
+    async def set_peek_percentage(self, server_id: int, peek_percentage: int) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.peek_percentage = peek_percentage
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
+    async def set_peek_cooldown_seconds(self, server_id: int, peek_cooldown_seconds: int) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.peek_cooldown_seconds = peek_cooldown_seconds
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+
     async def load_from_db(self) -> SettingsManager:
         async with aiosqlite.connect(consts.SQLITE_DB) as db:
             SERVER_ID = 0
@@ -113,7 +137,10 @@ class SettingsManager:
             WHISPER_ENABLED = 8
             WHISPER_PERCENTAGE = 9
             WHISPER_COOLDOWN_SECONDS = 10
-            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds FROM server_settings") as cursor:
+            PEEK_ENABLED = 11
+            PEEK_PERCENTAGE = 12
+            PEEK_COOLDOWN_SECONDS = 13
+            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds FROM server_settings") as cursor:
                 async for row in cursor:
                     server_id = row[SERVER_ID]
                     spectator_role_id = row[SPECTATOR_ROLE_ID]
@@ -126,7 +153,10 @@ class SettingsManager:
                     whisper_enabled = True if row[WHISPER_ENABLED] else False
                     whisper_percentage = row[WHISPER_PERCENTAGE]
                     whisper_cooldown_seconds = row[WHISPER_COOLDOWN_SECONDS]
-                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage ,whisper_cooldown_seconds)
+                    peek_enabled = True if row[PEEK_ENABLED] else False
+                    peek_percentage = row[PEEK_PERCENTAGE]
+                    peek_cooldown_seconds = row[PEEK_COOLDOWN_SECONDS]
+                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds)
                     self._settings_dict[server_id] = server_settings
         return self
 
@@ -142,8 +172,11 @@ class SettingsManager:
             whisper_enabled = "1" if server_settings.whisper_enabled else "0"
             whisper_percentage = str(server_settings.whisper_percentage)
             whisper_cooldown_seconds = str(server_settings.whisper_cooldown_seconds)
+            peek_enabled = "1" if server_settings.peek_enabled else "0"
+            peek_percentage = str(server_settings.peek_percentage)
+            peek_cooldown_seconds = str(server_settings.peek_cooldown_seconds)
             sync_commands_and_bots_to_spectators = "1" if server_settings.sync_commands_and_bots_to_spectators else "0"
             await db.execute(
-                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds) VALUES 
-                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators}, {yell_enabled}, {yell_cooldown_seconds}, {whisper_enabled}, {whisper_percentage}, {whisper_cooldown_seconds})""")
+                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds) VALUES 
+                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators}, {yell_enabled}, {yell_cooldown_seconds}, {whisper_enabled}, {whisper_percentage}, {whisper_cooldown_seconds}, {peek_enabled}, {peek_percentage}, {peek_cooldown_seconds})""")
             await db.commit()

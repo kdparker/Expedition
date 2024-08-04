@@ -328,7 +328,7 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         username=display_name,
         avatar_url=avatar_url,
         attachments=message.attachments,
-        user_mentions=message.user_mentions_ids,
+        user_mentions=message.user_mentions_ids if hasattr(message, 'user_mentions_ids') else [],
         embeds=embeds,
         mentions_everyone=False,
         flags=message.flags
@@ -650,6 +650,42 @@ async def set_whisper_cooldown(ctx: lightbulb.SlashContext):
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("toggle-peeking", "Turn on/off the ability for players to peek")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_peeking(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Toggling peeking...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    server_settings = settings_manager.get_settings(guild.id)
+    new_value = not server_settings.peek_enabled
+    await settings_manager.set_peek_enabled(guild.id, new_value)
+    return await ctx.respond(f"{'Enabled' if new_value else 'Disabled'} peeking")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("percentage", "Percent chance to be seen while peeking", type=int)
+@lightbulb.command("set-peek-percentage", "Set how likely it is for a person to be seen while peeking")
+@lightbulb.implements(commands.SlashCommand)
+async def set_peek_percentage(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting peeking percentage...", flags=hikari.MessageFlag.LOADING)
+    percentage = ctx.options['percentage']
+    guild = await get_guild(ctx)
+    await settings_manager.set_peek_percentage(guild.id, percentage)
+    return await ctx.respond(f"Percentage set")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("seconds", "Seconds to set cooldown to (0 means no cooldown, which is default)", type=int)
+@lightbulb.command("set-peek-cooldown", "How many seconds a player has to wait between peeking")
+@lightbulb.implements(commands.SlashCommand)
+async def set_peek_cooldown(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.LOADING)
+    seconds = ctx.options['seconds']
+    guild = await get_guild(ctx)
+    await settings_manager.set_peek_cooldown_seconds(guild.id, seconds)
+    return await ctx.respond(f"Cooldown set")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
 @lightbulb.command("prepopulate-roles", "Create all roles for a map without needing to go there, useful for setting up for a season")
 @lightbulb.implements(commands.SlashCommand)
@@ -869,6 +905,72 @@ async def whisper(ctx: lightbulb.SlashContext):
         await spectator_text_channel.send(f"{player.mention} whispered{overheard_text} to {target.mention}:\n\n{ctx.options['message']}")
         map_to_use.reset_whisper_cooldown(player.id)
         await ctx.respond(f"You whispered to {target.mention}:\n\n{ctx.options['message']}")
+    
+@plugin.command
+@lightbulb.option("location-name", "The location you want to peek at", type=str)
+@lightbulb.command("peek", "Peek in a location to see who's there without moving, with a chance the people there see you peeking")
+@lightbulb.implements(commands.SlashCommand)
+async def peek(ctx: lightbulb.SlashContext):
+    guild = await get_guild(ctx)
+    settings = settings_manager.get_settings(guild.id)
+    player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
+    maps_player_is_in = get_maps_player_is_in(guild, player)
+    if not maps_player_is_in:
+        return await ctx.respond("You're not in a map")
+    if not settings.peek_enabled:
+        return await ctx.respond("Peeking is currently disabled")
+    map_to_use = maps_player_is_in[0]
+    if len(maps_player_is_in) >= 2:
+        error_message = "Since you are in two maps, we need you to use the command in the map you want check on"
+        category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+        category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+        map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+        if map_name not in map(lambda m: m.name, maps_player_is_in):
+            return await ctx.respond(error_message)
+        map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    active_channel = await guildChannelEnforcer.ensure_type(
+        get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Could not find a channel you are active in for your location, if this is an error contact the admins")
+    category = await guildChannelEnforcer.ensure_type(
+        get_category_of_channel(guild, active_channel.id), ctx, "Could not find category of active channel, contact the admins")
+    current_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Could not determine location from your active channel, contact the admins")
+    target_location = ctx.options['location-name'].lower()
+    if current_location == target_location:
+        return await ctx.respond(f"You don't need to peek at a location you're already in.")
+    if target_location not in map_to_use.locations:
+        return await ctx.respond(f"Invalid location: {target_location}. Not in the map")
+    if settings.peek_cooldown_seconds > 0:
+        if player.id in map_to_use.peek_cooldowns:
+            last_peek_time: datetime.datetime = map_to_use.peek_cooldowns[player.id]
+            next_possible_peek_time = last_peek_time + datetime.timedelta(seconds=settings.peek_cooldown_seconds)
+            diff = next_possible_peek_time - datetime.datetime.now()
+            if diff.total_seconds() > 0:
+                return await ctx.respond(f"Peeking in this map is still on cooldown for {diff.total_seconds()} seconds")
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Peeking...", flags=hikari.MessageFlag.LOADING)
+    async with map_to_use.cond:
+        was_seen = settings.peek_percentage > 0 and random.randint(1, 100) <= settings.peek_percentage
+        if was_seen:
+            nullable_category = get_category_of_channel(guild, active_channel.id)  
+            if nullable_category is None:
+                return
+            map_category: hikari.GuildChannel = nullable_category
+            chat_channels = get_channels_in_category(guild, map_category)
+            for chat_channel in chat_channels:
+                if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+                    continue
+                chat_text_channel: hikari.GuildTextChannel = chat_channel
+                chat_channel_location = get_location_channels_location(chat_text_channel)
+                if chat_channel_location == target_location:
+                    await chat_channel.send(f"You saw {player.mention} ({player.display_name}) peek in to {target_location}")
+        map_to_use.reset_peek_cooldown(player.id)
+        map_channels = get_channels_in_category(guild, category)
+        location_players = await get_players_in_location(ctx.bot, guild, map_channels, target_location)
+        if len(location_players) == 0:
+            return await ctx.respond(f"No one is in {target_location}")
+        if len(location_players) == 1:
+            p = location_players[0]
+            return await ctx.respond(f"{p.mention} ({p.display_name}) is in {target_location}")
+        players_string = ', '.join(map(lambda p: f"{p.mention} ({p.display_name})", location_players))
+        return await ctx.respond(f"{players_string} are in {target_location}")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))

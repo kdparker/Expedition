@@ -441,6 +441,48 @@ async def remove_player(ctx: lightbulb.SlashContext):
     await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
 @plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("location", "Where you want to move the player", type=str)
+@lightbulb.option("map-name", "Name of the map the player will be moved in", type=str)
+@lightbulb.option("player", "Member you want to move", type=hikari.Member)
+@lightbulb.command("move-player", "Moves the given member to the given location in the given map")
+@lightbulb.implements(commands.SlashCommand)
+async def move_player(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Moving player...", flags=hikari.MessageFlag.LOADING)
+    map_name = ctx.options["map-name"].lower()
+    guild = await get_guild(ctx)
+    player = ctx.options['player']
+    location = ctx.options['location'].lower()
+    map_to_use = await get_map(ctx, guild, map_name)
+    settings = settings_manager.get_settings(guild.id)
+    maps_player_is_in = get_maps_player_is_in(guild, player)
+    if map_to_use not in maps_player_is_in:
+        return await ctx.respond(f"{player.display_name} is not in {map_name}")
+    async with map_to_use.cond:
+        if location not in map_to_use.locations:
+            return await ctx.respond(f"{location} is not in the map you are moving with")
+        active_channel = await guildChannelEnforcer.ensure_type(
+            get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, f"Can't find player's active channel for some reason, please contact admins")
+        active_channel_location = await stringEnforcer.ensure_type(
+            get_location_channels_location(active_channel), ctx, "Could not extract current location of player's active channel, please contact admins")
+        if active_channel_location == location:
+            return await ctx.respond(f"Already in {location}")
+        try:
+            await active_channel.edit(name=get_player_location_name(player, location))
+        except hikari.RateLimitedError as e:
+            return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
+        map_to_use.reset_cooldown(player.id)
+        await ctx.respond(f"You have moved {player.display_name} to {location}", flags=hikari.MessageFlag.NONE)
+    nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
+    nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
+    if nullable_spectator_from_text_channel is not None:
+        await nullable_spectator_from_text_channel.send(f"{player.display_name} sent to {location} by admins")
+    if nullable_spectator_to_text_channel is not None:
+        await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+    if settings.should_track_roles:
+        await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
+
+@plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
 @lightbulb.command("move", "Moves to the given location, based on your current map")
 @lightbulb.implements(commands.SlashCommand)
@@ -897,7 +939,7 @@ async def whisper(ctx: lightbulb.SlashContext):
         target_active_location = get_location_channels_location(target_active_channel)
         if active_location != target_active_location:
             return await ctx.respond(f"You must be in the same location as {target.mention} to whisper to them.")
-        await target_active_channel.send(f"{player.mention} whispered to you:\n\n{ctx.options['message']}")
+        await target_active_channel.send(f"{player.mention} ({player.display_name}) whispered to you:\n\n{ctx.options['message']}")
         was_overheard = settings.whisper_percentage > 0 and random.randint(1, 100) <= settings.whisper_percentage
         if was_overheard:
             nullable_category = get_category_of_channel(guild, active_channel.id)  
@@ -911,16 +953,16 @@ async def whisper(ctx: lightbulb.SlashContext):
                 chat_text_channel: hikari.GuildTextChannel = chat_channel
                 chat_channel_location = get_location_channels_location(chat_text_channel)
                 if chat_channel_location == active_location:
-                    await chat_channel.send(f"You overheard {player.mention} whisper to {target.mention}:\n\n{ctx.options['message']}")
+                    await chat_channel.send(f"You overheard {player.mention} ({player.display_name}) whisper to {target.mention} ({target.display_name}):\n\n{ctx.options['message']}")
         nullable_spectator_text_channel = find_spectator_channel(guild, map_to_use, active_location)
         if nullable_spectator_text_channel is None:
             return
         spectator_text_channel: hikari.GuildTextChannel = nullable_spectator_text_channel
         overheard_text = " (and overheard by everyone else)" if was_overheard else ""
-        await spectator_text_channel.send(f"{player.mention} whispered{overheard_text} to {target.mention}:\n\n{ctx.options['message']}")
+        await spectator_text_channel.send(f"{player.mention} ({player.display_name}) whispered{overheard_text} to {target.mention} ({target.display_name}):\n\n{ctx.options['message']}")
         map_to_use.reset_whisper_cooldown(player.id)
         await log_action_to_flint(ctx, "whisper", player, guild.get_channel(ctx.channel_id))
-        await ctx.respond(f"You whispered to {target.mention}:\n\n{ctx.options['message']}")
+        await ctx.respond(f"You whispered to {target.mention} ({target.display_name}) :\n\n{ctx.options['message']}")
     
 @plugin.command
 @lightbulb.option("location-name", "The location you want to peek at", type=str)

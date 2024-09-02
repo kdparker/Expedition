@@ -1,6 +1,7 @@
 venv/*
 secrets/client
 secrets/client.test
+secrets/openaikey
 *.pyc
 .DS_STORE
 .idea/*

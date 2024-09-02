@@ -472,6 +472,7 @@ async def move_player(ctx: lightbulb.SlashContext):
         except hikari.RateLimitedError as e:
             return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
         map_to_use.reset_cooldown(player.id)
+        await active_channel.send(f"Moved to {location}")
         await ctx.respond(f"You have moved {player.display_name} to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
@@ -532,6 +533,7 @@ async def move(ctx: lightbulb.SlashContext):
         except hikari.RateLimitedError as e:
             return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
         map_to_use.reset_cooldown(player.id)
+        await active_channel.send(f"Moved to {location}")
         await ctx.respond(f"You have moved to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)

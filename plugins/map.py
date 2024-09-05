@@ -311,7 +311,30 @@ def replace_rpt_emotes(s: str) -> str:
     s = s.replace("<:RPTmark:604411500744146984>", "<:RPTmark:1055177873109041243>")
     return s
 
-async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message):
+async def find_message_in_channel(bot: hikari.GatewayBot, channel: hikari.GuildTextChannel, original_content: str) -> Optional[hikari.Message]:
+    if original_content.startswith("*In Reply to"):
+        original_content_lines = original_content.split('\n')
+        original_content = "\n".join(original_content_lines[2:])
+    i = 0
+    async for message in bot.rest.fetch_messages(channel):
+        if i == 99:
+            break
+        if message.content == original_content:
+            return message
+        i += 1
+    return None
+
+def transform_text_content(content: str) -> str:
+    is_only_emote = re.match(emote_pattern, content)
+    if is_only_emote:
+        cached_emoji = bot.cache.get_emoji(int(is_only_emote.group(2)))
+        if not cached_emoji:
+            postfix = "gif" if is_only_emote.group(1) else "png"
+            content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
+    content = replace_rpt_emotes(content) if content is not None else None
+    return content
+
+async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.ExecutableWebhook, display_name: hikari.UndefinedOr[str], message: hikari.Message, channel: hikari.GuildTextChannel):
     content = message.content or ""
     embeds = message.embeds
     avatar_url: Union[hikari.UndefinedType, str, hikari.URL] = message.author.avatar_url or hikari.UNDEFINED
@@ -322,19 +345,18 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         and len(embeds) == 1 and not embeds[0].author and not embeds[0].description and not embeds[0].fields
         and embeds[0].url == content):
         embeds = []
-    is_only_emote = re.match(emote_pattern, content)
-    if is_only_emote:
-        cached_emoji = bot.cache.get_emoji(int(is_only_emote.group(2)))
-        if not cached_emoji:
-            postfix = "gif" if is_only_emote.group(1) else "png"
-            content = f"https://cdn.discordapp.com/emojis/{is_only_emote.group(2)}.{postfix}?size=48"
+    content = transform_text_content(content)
     if message.stickers:
         content = f"https://media.discordapp.net/stickers/{message.stickers[0].id}.png?size=160"
-    content = replace_rpt_emotes(content) if content is not None else None
     for embed in embeds:
         embed.description = replace_rpt_emotes(embed.description) if embed.description is not None else None
         for field in embed.fields:
             field.value = replace_rpt_emotes(field.value) if field.value is not None else None
+    if message.referenced_message and len(content) < 1750:
+        found_message = await find_message_in_channel(bot, channel, message.referenced_message.content)
+        if found_message:
+            quoted_reply = f"*In Reply to {found_message.make_link(channel.get_guild())}*"
+            content = f"{quoted_reply}\n\n{content}"
 
     await webhook.execute(
         content=content,
@@ -1120,7 +1142,7 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
             for webhook in webhooks:
                 if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
                     continue
-                await execute_mirrored_webhook(plugin.bot, webhook, display_name, event.message)
+                await execute_mirrored_webhook(plugin.bot, webhook, display_name, event.message, chat_text_channel)
 
     location_players = await get_players_in_location(bot, guild, chat_channels, location)
     other_players_in_channel = list(filter(lambda p: event.message.member is None or p.id != event.message.member.id, location_players))
@@ -1139,7 +1161,92 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
     for spectator_webhook in spectator_webhooks:
         if not (spectator_webhook.name == WEBHOOK_NAME and isinstance(spectator_webhook, hikari.ExecutableWebhook)):
             continue
-        await execute_mirrored_webhook(plugin.bot, spectator_webhook, display_name, event.message)
+        await execute_mirrored_webhook(plugin.bot, spectator_webhook, display_name, event.message, spectator_text_channel)
+
+@plugin.listener(hikari.MessageUpdateEvent, bind=True) # type: ignore[misc]
+async def mirror_edits(plugin: lightbulb.Plugin, event: hikari.MessageCreateEvent):
+    bot = plugin.bot
+    if event.is_webhook or event.author_id == bot.get_me().id:
+        return
+    if not event.author or not event.old_message:
+        return 
+    if event.message.guild_id is None:
+        return
+    if event.message.author.id == 1121647528757178418 and not event.message.content.startswith("You rolled"): # flint
+        return
+    nullable_guild = bot.cache.get_available_guild(event.message.guild_id)
+    if nullable_guild is None:
+        return
+    guild: hikari.Guild = nullable_guild
+    nullable_channel =  bot.cache.get_guild_channel(event.message.channel_id)
+    if nullable_channel is None:
+        return
+    channel: hikari.GuildChannel = nullable_channel
+    nullable_category = get_category_of_channel(guild, channel.id)  
+    if nullable_category is None:
+        return
+    category: hikari.GuildChannel = nullable_category
+    nullable_category_name = category.name
+    if nullable_category_name is None or "-spectator" in nullable_category_name:
+        return
+    category_name: str = nullable_category_name
+    nullable_map_name = get_map_name_from_category(category_name)
+    if nullable_map_name is None:
+        return
+    map_name: str = nullable_map_name
+    nullable_fetched_map = atlas.get_map(guild.id, map_name)
+    if nullable_fetched_map is None:
+        return
+    fetched_map: Map = nullable_fetched_map
+    if not fetched_map.talking_enabled:
+        return await event.message.respond("Talking here is off right now.")
+    nullable_location = get_location_channels_location(channel)
+    if nullable_location is None:
+        return
+    location: str = nullable_location
+    chat_channels = get_channels_in_category(guild, category)
+    server_settings = settings_manager.get_settings(guild.id)
+    for chat_channel in chat_channels:
+        if chat_channel == channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+            continue
+        chat_text_channel: hikari.GuildTextChannel = chat_channel
+        chat_channel_location = get_location_channels_location(chat_text_channel)
+        if chat_channel_location == location:
+            webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
+            display_name: hikari.UndefinedOr[str] = event.message.member.display_name if event.message.member is not None else hikari.UNDEFINED
+            for webhook in webhooks:
+                if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
+                    continue
+                found_message = await find_message_in_channel(plugin.bot, chat_text_channel, event.old_message.content)
+                if found_message:
+                    new_content = event.content
+                    if found_message.content.startswith("*In reply to"):
+                        new_content = "\n".join(found_message.content.split("\n")[:2] + [new_content])
+                    await webhook.edit_message(found_message.id, content=new_content)
+
+    location_players = await get_players_in_location(bot, guild, chat_channels, location)
+    other_players_in_channel = list(filter(lambda p: event.message.member is None or p.id != event.message.member.id, location_players))
+    nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, location)
+    if nullable_spectator_text_channel is None:
+        return
+    spectator_text_channel: hikari.GuildTextChannel = nullable_spectator_text_channel
+    spectator_webhooks = await bot.rest.fetch_channel_webhooks(spectator_text_channel)
+    display_name = "{} (to {})".format(
+        event.message.member.display_name if event.message.member is not None else "???", 
+        ", ".join(map(lambda x: x.display_name, other_players_in_channel)) if other_players_in_channel else "nobody else")
+    if len(display_name) >= MAX_DISPLAY_NAME_LENGTH:
+        display_name = display_name[:MAX_DISPLAY_NAME_LENGTH - 4] + "...)"
+    if (not server_settings.sync_commands_and_bots_to_spectators) and message_is_bot_or_commandlike(event.message):
+        return
+    for spectator_webhook in spectator_webhooks:
+        if not (spectator_webhook.name == WEBHOOK_NAME and isinstance(spectator_webhook, hikari.ExecutableWebhook)):
+            continue
+        found_message = await find_message_in_channel(plugin.bot, spectator_text_channel, event.old_message.content)
+        if found_message:
+            new_content = event.content
+            if found_message.content.startswith("*In reply to"):
+                new_content = "\n".join(found_message.content.split("\n")[:2] + [new_content])
+            await spectator_webhook.edit_message(found_message.id, content=new_content)
 
 @plugin.listener(hikari.StartedEvent)
 async def setup_states(event: hikari.StartedEvent):

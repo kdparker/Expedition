@@ -1097,7 +1097,7 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         return
     if event.message.guild_id is None:
         return
-    if event.message.author.id == 1121647528757178418 and not event.message.content.startswith("You rolled"): # flint
+    if event.message.author.id == 1121647528757178418 and not (event.message.content and event.message.content.startswith("You rolled")): # flint
         return
     nullable_guild = bot.cache.get_available_guild(event.message.guild_id)
     if nullable_guild is None:
@@ -1172,7 +1172,7 @@ async def mirror_edits(plugin: lightbulb.Plugin, event: hikari.MessageCreateEven
         return 
     if event.message.guild_id is None:
         return
-    if event.message.author.id == 1121647528757178418 and not event.message.content.startswith("You rolled"): # flint
+    if event.message.author.id == 1121647528757178418 and not (event.message.content and event.message.content.startswith("You rolled")): # flint
         return
     nullable_guild = bot.cache.get_available_guild(event.message.guild_id)
     if nullable_guild is None:

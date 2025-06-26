@@ -583,14 +583,14 @@ async def move_player(ctx: lightbulb.SlashContext):
         await ctx.respond(f"You have moved {player.display_name} to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
-    spec_message = None
-    if nullable_spectator_from_text_channel is not None:
-        await nullable_spectator_from_text_channel.send(f"{player.display_name} sent to {location} by admins")
+    to_message = None
     if nullable_spectator_to_text_channel is not None:
-        spec_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+        to_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+    if nullable_spectator_from_text_channel is not None:
+        await nullable_spectator_from_text_channel.send(f"{player.display_name} sent to [{location}]({to_message.make_link(guild)}) by admins")
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)
-    await locations_message(ctx, guild, map_to_use, player, spec_message, location)
+    await locations_message(ctx, guild, map_to_use, player, to_message, location)
 
 @plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
@@ -646,14 +646,15 @@ async def move(ctx: lightbulb.SlashContext):
         await ctx.respond(f"You have moved to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
-    if nullable_spectator_from_text_channel is not None:
-        await nullable_spectator_from_text_channel.send(f"{player.display_name} went to {location}")
+    to_message = None
     if nullable_spectator_to_text_channel is not None:
-        spec_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+        to_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+    if nullable_spectator_from_text_channel is not None:
+        await nullable_spectator_from_text_channel.send(f"{player.display_name} went to [{location}]({to_message.make_link(guild)})")
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
     await log_action_to_flint(ctx, "move", player, guild.get_channel(ctx.channel_id))
-    await locations_message(ctx, guild, map_to_use, player, spec_message, location)
+    await locations_message(ctx, guild, map_to_use, player, to_message, location)
 
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")

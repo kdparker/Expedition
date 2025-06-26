@@ -27,6 +27,7 @@ memberEnforcer = TypeEnforcer[hikari.Member]()
 stringEnforcer = TypeEnforcer[str]()
 
 emote_pattern = r'^<(a?):.*:(\d+)>$'
+link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
 
 MAX_DISPLAY_NAME_LENGTH = 80
 
@@ -134,6 +135,32 @@ async def ensure_location_channel(ctx: lightbulb.SlashContext, guild: hikari.Gui
     await ensure_webhook_on_channel(ctx, channel)
     return channel
 
+async def ensure_spectator_locations_channel(ctx: lightbulb.SlashContext, guild: hikari.Guild, category: hikari.GuildChannel, created_map: Map) -> hikari.GuildChannel:
+    channel_name = f"{created_map.name.lower()}-locations"
+    for channel in get_channels_in_category(guild, category):
+        if channel.name == channel_name:
+            return channel
+    private_perms = await get_private_perms(guild)
+    perms = [private_perms]
+    server_settings = settings_manager.get_settings(guild.id)
+    if server_settings.admin_role_id is not None:
+        perms.append(hikari.PermissionOverwrite(
+            id=server_settings.admin_role_id,
+            type=hikari.PermissionOverwriteType.ROLE,
+            allow=ADMIN_PERMISSIONS,
+            deny=ADMIN_DENIES
+        ))
+    if server_settings.spectator_role_id is not None:
+        perms.append(hikari.PermissionOverwrite(
+            id=server_settings.spectator_role_id,
+            type=hikari.PermissionOverwriteType.ROLE,
+            allow=READ_PERMISSIONS,
+            deny=READ_DENIES
+        ))
+    channel = await guild.create_text_channel(channel_name, permission_overwrites=perms, category=category.id)
+    await ensure_webhook_on_channel(ctx, channel)
+    return channel
+
 async def ensure_spectator_channel(ctx: lightbulb.SlashContext, guild: hikari.Guild, category: hikari.GuildChannel, map_of_location: Map, location: str) -> hikari.GuildChannel:
     channel_name = f"{map_of_location.name.lower()}-{location.lower()}"
     for channel in get_channels_in_category(guild, category):
@@ -159,6 +186,61 @@ async def ensure_spectator_channel(ctx: lightbulb.SlashContext, guild: hikari.Gu
     channel = await guild.create_text_channel(channel_name, permission_overwrites=perms, category=category.id)
     await ensure_webhook_on_channel(ctx, channel)
     return channel
+
+def find_locations_channel(guild: hikari.Guild, map_to_use: Map) -> Optional[hikari.GuildTextChannel]:
+    for channel_id, channel in guild.get_channels().items():
+        if channel.name == f"{map_to_use.name.lower()}-locations" and channel.type == hikari.ChannelType.GUILD_TEXT:
+            return channel
+    return None
+
+def separate_link_markdown(s: str) -> tuple[str]:
+    match = re.match(link_pattern, s)
+    return (match.group(1), match.group(2)) if match else None
+
+async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, player_changed: hikari.Member, change_message: hikari.Message, new_location: str):
+    locations_channel = find_locations_channel(guild, map_to_use)
+    if not locations_channel:
+        return
+    locations_channel_message = None
+
+    async for message in locations_channel.fetch_history():
+        locations_channel_message = message
+        break # get single message
+    if locations_channel_message is None and new_location is not None:
+        return await locations_channel.send(f"{new_location.capitalize()}: [{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})\n")
+    
+    new_message = ""
+    locations_visited = set()
+    for line in locations_channel_message.content.split('\n'):
+        if line.strip() == "":
+            new_message += line + "\n"
+            continue
+        split_line = line.split(':')
+        if len(split_line) < 2:
+            new_message += line + "\n"
+
+        location = split_line[0].strip().lower()
+        locations_visited.add(location)
+        players_with_links = map(
+            lambda entry: separate_link_markdown(entry.strip()), 
+            ":".join(split_line[1:]).strip().split(',')
+        )
+        new_players_with_links = []
+        for player_with_link in list(players_with_links):
+            if player_with_link[0].lower() != get_sanitized_player_name(player_changed):
+                new_players_with_links.append(player_with_link)
+        if new_location is not None and location == new_location.lower():
+            new_players_with_links.append((get_sanitized_player_name(player_changed).capitalize(), change_message.make_link(guild) if change_message else "https://example.com"))
+        if len(new_players_with_links) == 0:
+            continue
+        new_message += f"{location.capitalize()}: {', '.join(map(lambda entry: f'[{entry[0]}]({entry[1]})', new_players_with_links))}\n"
+    if new_location is not None and new_location not in locations_visited:
+        new_message += f"{new_location.capitalize()}: [{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})\n"
+    
+    if not new_message:
+        await locations_channel_message.delete()
+        return
+    await locations_channel_message.edit(content=new_message)
 
 def get_all_location_channels_for_map(guild: hikari.Guild, map_name: str) -> list[hikari.GuildChannel]:
     map_chat_category_ids: list[int] = []
@@ -393,6 +475,7 @@ async def create_map(ctx: lightbulb.SlashContext):
     async with created_map.cond:
         await ensure_category_exists(guild, f"{created_map.name}-channels-0")
         category = await ensure_category_exists(guild, f"{created_map.name}-spectator")
+        await ensure_spectator_locations_channel(ctx, guild, category, created_map)
         for location in locations:
             await ensure_spectator_channel(ctx, guild, category, created_map, location)
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_UPDATE, f"Map {created_map.name} created with locations: `{locations}`")
@@ -415,10 +498,11 @@ async def add_player(ctx: lightbulb.SlashContext):
         channel = await ensure_location_channel(ctx, guild, player, category_for_chats, fetched_map, starting_location, True)
         nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, starting_location)
         if nullable_spectator_text_channel is not None:
-            await nullable_spectator_text_channel.send(f"{player.mention} finds themselves on {fetched_map.name}")
+            spec_message = await nullable_spectator_text_channel.send(f"{player.mention} finds themselves on {fetched_map.name}")
         settings = settings_manager.get_settings(guild.id)
         if settings.should_track_roles:
             await set_new_location_role(ctx, player, guild, fetched_map.name, starting_location)
+        await locations_message(ctx, guild, fetched_map, player, spec_message, starting_location)
         await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
 
 @plugin.command
@@ -460,6 +544,7 @@ async def remove_player(ctx: lightbulb.SlashContext):
         roles = await player.fetch_roles()
         roles = list(filter(lambda r: not r.name.startswith(f"expedition-{fetched_map.name.lower()}-"), roles))
         await player.edit(roles=roles)
+    await locations_message(ctx, guild, fetched_map, player, None, None)
     await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
 @plugin.command
@@ -498,12 +583,14 @@ async def move_player(ctx: lightbulb.SlashContext):
         await ctx.respond(f"You have moved {player.display_name} to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
+    spec_message = None
     if nullable_spectator_from_text_channel is not None:
         await nullable_spectator_from_text_channel.send(f"{player.display_name} sent to {location} by admins")
     if nullable_spectator_to_text_channel is not None:
-        await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+        spec_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
     if settings.should_track_roles:
-        await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
+        await set_new_location_role(ctx, player, guild, map_to_use.name, location)
+    await locations_message(ctx, guild, map_to_use, player, spec_message, location)
 
 @plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
@@ -562,10 +649,11 @@ async def move(ctx: lightbulb.SlashContext):
     if nullable_spectator_from_text_channel is not None:
         await nullable_spectator_from_text_channel.send(f"{player.display_name} went to {location}")
     if nullable_spectator_to_text_channel is not None:
-        await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
+        spec_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
     await log_action_to_flint(ctx, "move", player, guild.get_channel(ctx.channel_id))
+    await locations_message(ctx, guild, map_to_use, player, spec_message, location)
 
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")

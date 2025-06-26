@@ -31,6 +31,9 @@ link_pattern = r'\[([^\]]+)\]\(([^\)]+)\)'
 
 MAX_DISPLAY_NAME_LENGTH = 80
 
+def flatten_list_of_lists(lists):
+    return [item for sublist in lists for item in sublist]
+
 async def get_role_with_name(guild:hikari.Guild, role_name: str, should_fetch: bool = True) -> Optional[hikari.Role]:
     if should_fetch:
         await guild.fetch_roles()
@@ -197,7 +200,7 @@ def separate_link_markdown(s: str) -> tuple[str]:
     match = re.match(link_pattern, s)
     return (match.group(1), match.group(2)) if match else None
 
-async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, player_changed: hikari.Member, change_message: hikari.Message, new_location: str):
+async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players_changed: list[hikari.Member], change_message: hikari.Message, new_location: str):
     locations_channel = find_locations_channel(guild, map_to_use)
     if not locations_channel:
         return
@@ -207,10 +210,12 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
         locations_channel_message = message
         break # get single message
     if locations_channel_message is None and new_location is not None:
-        return await locations_channel.send(f"{new_location.capitalize()}: [{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})\n")
+        players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
+        return await locations_channel.send(f"{new_location.capitalize()}: {players_list}\n")
     
     new_message = ""
     locations_visited = set()
+    sanitized_player_names = set(map(lambda player_changed: get_sanitized_player_name(player_changed), players_changed))
     for line in locations_channel_message.content.split('\n'):
         if line.strip() == "":
             new_message += line + "\n"
@@ -227,15 +232,17 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
         )
         new_players_with_links = []
         for player_with_link in list(players_with_links):
-            if player_with_link[0].lower() != get_sanitized_player_name(player_changed):
+            if player_with_link[0].lower() not in sanitized_player_names:
                 new_players_with_links.append(player_with_link)
         if new_location is not None and location == new_location.lower():
-            new_players_with_links.append((get_sanitized_player_name(player_changed).capitalize(), change_message.make_link(guild) if change_message else "https://example.com"))
+            for player_changed in players_changed:
+                new_players_with_links.append((get_sanitized_player_name(player_changed).capitalize(), change_message.make_link(guild) if change_message else "https://example.com"))
         if len(new_players_with_links) == 0:
             continue
         new_message += f"{location.capitalize()}: {', '.join(map(lambda entry: f'[{entry[0]}]({entry[1]})', new_players_with_links))}\n"
     if new_location is not None and new_location not in locations_visited:
-        new_message += f"{new_location.capitalize()}: [{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})\n"
+        players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
+        new_message += f"{new_location.capitalize()}: {players_list}\n"
     
     if not new_message:
         await locations_channel_message.delete()
@@ -291,6 +298,15 @@ def get_player_location_channel_in_map(guild: hikari.Guild, player: hikari.Membe
     location_channel_name = get_player_location_name(player, location)
     filtered_player_location_channels = list(filter(lambda m: m.name == location_channel_name, player_location_channels))
     return filtered_player_location_channels[0] if filtered_player_location_channels else None
+
+async def get_player_to_location_channel_map_for_role(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, role: hikari.Role) -> dict[hikari.Member, hikari.GuildTextChannel]:
+    player_to_location_channel_map = {}
+    all_location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
+    for location_channel in all_location_channels:
+        player = await get_player_from_location(ctx.bot, guild, location_channel)
+        if player is not None and role.id in player.role_ids:
+            player_to_location_channel_map[player] = location_channel
+    return player_to_location_channel_map
 
 async def make_channel_readable_for_player(channel: hikari.GuildChannel, player: hikari.Member):
     permissions = hikari.PermissionOverwrite(
@@ -502,7 +518,7 @@ async def add_player(ctx: lightbulb.SlashContext):
         settings = settings_manager.get_settings(guild.id)
         if settings.should_track_roles:
             await set_new_location_role(ctx, player, guild, fetched_map.name, starting_location)
-        await locations_message(ctx, guild, fetched_map, player, spec_message, starting_location)
+        await locations_message(ctx, guild, fetched_map, [player], spec_message, starting_location)
         await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
 
 @plugin.command
@@ -544,7 +560,7 @@ async def remove_player(ctx: lightbulb.SlashContext):
         roles = await player.fetch_roles()
         roles = list(filter(lambda r: not r.name.startswith(f"expedition-{fetched_map.name.lower()}-"), roles))
         await player.edit(roles=roles)
-    await locations_message(ctx, guild, fetched_map, player, None, None)
+    await locations_message(ctx, guild, fetched_map, [player], None, None)
     await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
 @plugin.command
@@ -590,7 +606,89 @@ async def move_player(ctx: lightbulb.SlashContext):
         await nullable_spectator_from_text_channel.send(f"{player.display_name} sent to [{location}]({to_message.make_link(guild)}) by admins")
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)
-    await locations_message(ctx, guild, map_to_use, player, to_message, location)
+    await locations_message(ctx, guild, map_to_use, [player], to_message, location)
+
+@plugin.command
+@lightbulb.option("location", "Where you want to move the player", type=str)
+@lightbulb.option("map-name", "Name of the map the player will be moved in", type=str)
+@lightbulb.option("team", "Team role you want to move, rolename must contain 'team' or 'tribe'", type=hikari.Role)
+@lightbulb.command("move-team", "Moves all players of a role to a location, can only be used by admins or team members")
+@lightbulb.implements(commands.SlashCommand)
+async def move_team(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Moving team...", flags=hikari.MessageFlag.LOADING)
+    map_name = ctx.options["map-name"].lower()
+    guild = await get_guild(ctx)
+    new_location = ctx.options['location'].lower()
+    team_role: hikari.Role = ctx.options['team']
+    if "tribe" not in team_role.name.lower() and "team" not in team_role.name.lower():
+        return await ctx.respond(f"Role {team_role.name} does not contain 'team' or 'tribe', please use a different role")
+    if ctx.member.permissions & hikari.Permissions.MANAGE_GUILD == 0 and team_role.id not in ctx.member.role_ids:
+        return await ctx.respond("You are not allowed to move other teams, only admins or team members can do that")
+    map_to_use = await get_map(ctx, guild, map_name)
+    settings = settings_manager.get_settings(guild.id)
+    async with map_to_use.cond:
+        moved_players = {}
+        players_left_behind = []
+        players_already_there = []
+
+        if new_location not in map_to_use.locations:
+            return await ctx.respond(f"{new_location} is not in the map you are moving with")
+        
+        player_to_location_channel = await get_player_to_location_channel_map_for_role(ctx, guild, map_to_use, team_role)
+
+        for player, location_channel in player_to_location_channel.items():
+            location = get_location_channels_location(location_channel)
+            if location == new_location:
+                players_already_there.append(player)
+                continue
+            if player.id in map_to_use.cooldowns:
+                last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
+                next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
+                diff = next_possible_movement_time - datetime.datetime.now()
+                if diff.total_seconds() > 0:
+                    players_left_behind.append((player, "Cooldown"))
+                    continue
+            if new_location in map_to_use.role_requirements:
+                found_good_role = False
+                for role_id in player.role_ids:
+                    if role_id in map_to_use.role_requirements[location]:
+                        found_good_role = True
+                        break
+                if not found_good_role:
+                    players_left_behind.append((player, "Needs role"))
+                    continue
+            try:
+                await location_channel.edit(name=get_player_location_name(player, new_location))
+                moved_players[location] = moved_players.get(location, []) + [player]
+                map_to_use.reset_cooldown(player.id)
+            except hikari.RateLimitedError as e:
+                players_left_behind.append((player, f"Discord rate limits"))
+                continue
+
+        if not moved_players:
+            return await ctx.respond(f"No players were moved, all players were either already in {new_location} or left behind due to cooldowns or missing roles")
+
+        nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
+        to_message = None
+        if nullable_spectator_to_text_channel is not None:
+            to_message = await nullable_spectator_to_text_channel.send(
+                f"Team {team_role.name} moved to {new_location}: {', '.join(map(lambda p: p.display_name, flatten_list_of_lists(moved_players.values())))}")
+        for location, players in moved_players.items():
+            nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, location)
+            if nullable_spectator_from_text_channel is not None:
+                await nullable_spectator_from_text_channel.send(
+                    f"Team {team_role.name} moved from {location} to [{new_location}]({to_message.make_link(guild)}): {', '.join(map(lambda p: p.display_name, players))}")
+        if settings.should_track_roles:
+            for player in flatten_list_of_lists(moved_players.values()):
+                await set_new_location_role(ctx, player, guild, map_to_use.name, new_location)
+        for player in flatten_list_of_lists(moved_players.values()):
+            await log_action_to_flint(ctx, "move", player, guild.get_channel(ctx.channel_id))
+        await ctx.respond(
+            f"""Players moved to {new_location}: {', '.join(map(lambda p: p.display_name, flatten_list_of_lists(moved_players.values())))}
+Players left behind: {', '.join(map(lambda p: f"{p[0].display_name} ({p[1]})", players_left_behind)) if players_left_behind else 'None'}
+Players already there: {', '.join(map(lambda p: p.display_name, players_already_there)) if players_already_there else 'None'}"""
+        )
+        await locations_message(ctx, guild, map_to_use, flatten_list_of_lists(moved_players.values()), to_message, new_location)
 
 @plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
@@ -654,7 +752,7 @@ async def move(ctx: lightbulb.SlashContext):
     if settings.should_track_roles:
         await set_new_location_role(ctx, player, guild, map_to_use.name, location)    
     await log_action_to_flint(ctx, "move", player, guild.get_channel(ctx.channel_id))
-    await locations_message(ctx, guild, map_to_use, player, to_message, location)
+    await locations_message(ctx, guild, map_to_use, [player], to_message, location)
 
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")

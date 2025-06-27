@@ -72,6 +72,10 @@ ALTER TABLE server_settings ADD COLUMN peek_percentage INT NOT NULL DEFAULT 10;
 ALTER TABLE server_settings ADD COLUMN peek_cooldown_seconds INT NOT NULL DEFAULT 0;
 """
 
+ANNOUNCE_ENTRY_SERVER_SETTING = """
+ALTER TABLE server_settings ADD COLUMN announce_entry INT NOT NULL DEFAULT 0;
+"""
+
 async def create_table():
     async with aiosqlite.connect(consts.SQLITE_DB) as db:
         await db.execute(CREATE_LOCATIONS_QUERY)
@@ -112,6 +116,10 @@ async def create_table():
         try:
             for line in ADD_PEEK_SERVER_SETTINGS.split('\n'):
                 await db.execute(line)
+        except Exception as e:
+            print(e)
+        try:
+            await db.execute(ANNOUNCE_ENTRY_SERVER_SETTING)
         except Exception as e:
             print(e)
         await db.commit()

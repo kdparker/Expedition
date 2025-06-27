@@ -537,6 +537,18 @@ async def toggle_talking(ctx: lightbulb.SlashContext):
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("toggle-announce-entry", "Toggles announcing to everyone in a map when a player enters")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_announce_entry(ctx: lightbulb.SlashContext):
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Toggling entry announcements...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    server_settings = settings_manager.get_settings(guild.id)
+    new_value = not server_settings.announce_entry
+    await settings_manager.set_announce_entry(guild.id, new_value)
+    return await ctx.respond(f"{'Enabled' if new_value else 'Disabled'} entry")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("player", "Member you want to remove from the given map", type=hikari.Member)
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
 @lightbulb.command("remove-player", 'Removes the given member from the given map, deleting "their" channels')
@@ -596,6 +608,16 @@ async def move_player(ctx: lightbulb.SlashContext):
             return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
         map_to_use.reset_cooldown(player.id)
         await active_channel.send(f"Moved to {location}")
+        if settings.announce_entry:
+            category = get_category_of_channel(guild, active_channel.id)
+            chat_channels = get_channels_in_category(guild, category)
+            for chat_channel in chat_channels:
+                if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+                    continue
+                chat_text_channel: hikari.GuildTextChannel = chat_channel
+                chat_channel_location = get_location_channels_location(chat_text_channel)
+                if chat_channel_location == location:
+                    await chat_text_channel.send(f"{player.display_name} has entered {location}")
         await ctx.respond(f"You have moved {player.display_name} to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
@@ -665,10 +687,25 @@ async def move_team(ctx: lightbulb.SlashContext):
                 players_left_behind.append((player, f"Discord rate limits"))
                 continue
 
+        moved_players_list = flatten_list_of_lists(moved_players.values())
         if not moved_players:
             return await ctx.respond(f"No players were moved, all players were either already in {new_location} or left behind due to cooldowns or missing roles")
-
-        nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
+        if settings.announce_entry:
+            category = get_category_of_channel(guild, location_channel.id)
+            chat_channels = get_channels_in_category(guild, category)
+            moved_player_ids = set(map(lambda p: p.id, moved_players_list))
+            moved_players_string = ", ".join(map(lambda p: p.display_name, moved_players_list))
+            for chat_channel in chat_channels:
+                if not isinstance(chat_channel, hikari.GuildTextChannel):
+                    continue
+                chat_player = await get_player_from_location(ctx.bot, guild, chat_channel)
+                if chat_player is None or chat_player.id in moved_player_ids:
+                    continue
+                chat_text_channel: hikari.GuildTextChannel = chat_channel
+                chat_channel_location = get_location_channels_location(chat_text_channel)
+                if chat_channel_location == new_location:
+                    await chat_text_channel.send(f"{moved_players_string} have entered {location}")
+        nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, new_location)
         to_message = None
         if nullable_spectator_to_text_channel is not None:
             to_message = await nullable_spectator_to_text_channel.send(
@@ -741,6 +778,16 @@ async def move(ctx: lightbulb.SlashContext):
             return await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
         map_to_use.reset_cooldown(player.id)
         await active_channel.send(f"Moved to {location}")
+        if settings.announce_entry:
+            category = get_category_of_channel(guild, active_channel.id)
+            chat_channels = get_channels_in_category(guild, category)
+            for chat_channel in chat_channels:
+                if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+                    continue
+                chat_text_channel: hikari.GuildTextChannel = chat_channel
+                chat_channel_location = get_location_channels_location(chat_text_channel)
+                if chat_channel_location == location:
+                    await chat_text_channel.send(f"{player.display_name} has entered {location}")
         await ctx.respond(f"You have moved to {location}", flags=hikari.MessageFlag.NONE)
     nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
     nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)

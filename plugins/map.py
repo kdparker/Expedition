@@ -656,6 +656,15 @@ async def move_team(ctx: lightbulb.SlashContext):
         if new_location not in map_to_use.locations:
             return await ctx.respond(f"{new_location} is not in the map you are moving with")
         
+        if new_location in map_to_use.role_requirements and ctx.member.permissions & hikari.Permissions.MANAGE_GUILD == 0:
+            found_good_role = False
+            for role_id in ctx.member.role_ids:
+                if role_id in map_to_use.role_requirements[new_location]:
+                    found_good_role = True
+                    break
+            if not found_good_role:
+                return await ctx.respond(f"You do not have the required role to move your team to {new_location}")
+        
         player_to_location_channel = await get_player_to_location_channel_map_for_role(ctx, guild, map_to_use, team_role)
 
         for player, location_channel in player_to_location_channel.items():
@@ -669,15 +678,6 @@ async def move_team(ctx: lightbulb.SlashContext):
                 diff = next_possible_movement_time - datetime.datetime.now()
                 if diff.total_seconds() > 0:
                     players_left_behind.append((player, "Cooldown"))
-                    continue
-            if new_location in map_to_use.role_requirements:
-                found_good_role = False
-                for role_id in player.role_ids:
-                    if role_id in map_to_use.role_requirements[location]:
-                        found_good_role = True
-                        break
-                if not found_good_role:
-                    players_left_behind.append((player, "Needs role"))
                     continue
             try:
                 await location_channel.edit(name=get_player_location_name(player, new_location))

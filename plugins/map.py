@@ -204,19 +204,21 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
     locations_channel = find_locations_channel(guild, map_to_use)
     if not locations_channel:
         return
-    locations_channel_message = None
+    locations_channel_message_array = []
 
     async for message in locations_channel.fetch_history():
-        locations_channel_message = message
-        break # get single message
-    if locations_channel_message is None and new_location is not None:
+        locations_channel_message_array.append(message)
+
+    locations_channel_message_array = locations_channel_message_array[::-1]
+    locations_channel_message_str = "\n".join(list(map(lambda m: m.content, locations_channel_message_array)))
+    if not locations_channel_message_str and new_location is not None:
         players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
         return await locations_channel.send(f"{new_location.capitalize()}: {players_list}\n")
     
     new_message = ""
     locations_visited = set()
     sanitized_player_names = set(map(lambda player_changed: get_sanitized_player_name(player_changed), players_changed))
-    for line in locations_channel_message.content.split('\n'):
+    for line in locations_channel_message_str.split('\n'):
         if line.strip() == "":
             new_message += line + "\n"
             continue
@@ -243,11 +245,27 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
     if new_location is not None and new_location not in locations_visited:
         players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
         new_message += f"{new_location.capitalize()}: {players_list}\n"
-    
+
     if not new_message:
-        await locations_channel_message.delete()
+        #await locations_channel_message.delete()
         return
-    await locations_channel_message.edit(content=new_message)
+    
+    current_message = ""
+    current_message_index = 0
+    for line in new_message.split('\n'):
+        if len(current_message) + len(line) > 1800:
+            if current_message_index >= len(locations_channel_message_array):
+                await locations_channel.send(current_message)
+            else:
+                await locations_channel_message_array[current_message_index].edit(content=current_message)
+            current_message = ""
+            current_message_index += 1
+        current_message += "\n" + line
+    if current_message:
+        if current_message_index >= len(locations_channel_message_array):
+            await locations_channel.send(current_message)
+        else:
+            await locations_channel_message_array[current_message_index].edit(content=current_message)
 
 def get_all_location_channels_for_map(guild: hikari.Guild, map_name: str) -> list[hikari.GuildChannel]:
     map_chat_category_ids: list[int] = []

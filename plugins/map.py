@@ -674,7 +674,7 @@ async def move_team(ctx: lightbulb.SlashContext):
         if new_location not in map_to_use.locations:
             return await ctx.respond(f"{new_location} is not in the map you are moving with")
         
-        if new_location in map_to_use.role_requirements and ctx.member.permissions & hikari.Permissions.MANAGE_GUILD == 0:
+        if new_location in map_to_use.role_requirements:
             found_good_role = False
             for role_id in ctx.member.role_ids:
                 if role_id in map_to_use.role_requirements[new_location]:

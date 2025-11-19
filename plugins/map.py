@@ -793,7 +793,6 @@ async def move(ctx: lightbulb.SlashContext) -> None:
     player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
     location = ctx.options['location'].lower()
     maps_player_is_in = get_maps_player_is_in(guild, player)
-    settings = settings_manager.get_settings(guild.id)
     if not maps_player_is_in:
         await ctx.respond("Cannot move when you're not in a map")
         return
@@ -1091,21 +1090,22 @@ async def prod_yell(ctx: lightbulb.SlashContext, guild: hikari.Guild, member: hi
     if len(filtered_maps) != 1:
         return await ctx.respond("Can't find which map you want to yell in, contact Keegan, code prod_yell:10")
     map_to_use = filtered_maps[0]
-    async with map_to_use.cond:
-        location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
-        locations_yelled_in_for_specs = []
-        for location_channel in location_channels:
-            location = get_location_channels_location(location_channel)
-            message = f"{member.display_name} yelled {ctx.options['message']}"
-            if location is not None:
-                nullable_spectator_channel = find_spectator_channel(guild, map_to_use, location)
-                if nullable_spectator_channel is not None and location not in locations_yelled_in_for_specs:
-                    specator_channel = nullable_spectator_channel
-                    await specator_channel.send(message, mentions_everyone=False)
-                    locations_yelled_in_for_specs.append(location)
-            if isinstance(location_channel, hikari.TextableGuildChannel):
-                await location_channel.send(message, mentions_everyone=False)
-        await ctx.respond(f"You yelled {ctx.options['message']}")
+    location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
+    locations_yelled_in_for_specs = []
+    async_tasks = []
+    for location_channel in location_channels:
+        location = get_location_channels_location(location_channel)
+        message = f"{member.display_name} yelled {ctx.options['message']}"
+        if location is not None:
+            nullable_spectator_channel = find_spectator_channel(guild, map_to_use, location)
+            if nullable_spectator_channel is not None and location not in locations_yelled_in_for_specs:
+                specator_channel = nullable_spectator_channel
+                async_tasks.append(asyncio.create_task(specator_channel.send(message, mentions_everyone=False)))
+                locations_yelled_in_for_specs.append(location)
+        if isinstance(location_channel, hikari.TextableGuildChannel):
+            async_tasks.append(asyncio.create_task(location_channel.send(message, mentions_everyone=False)))
+    async_tasks.append(asyncio.create_task(ctx.respond(f"You yelled {ctx.options['message']}")))
+    await asyncio.gather(*async_tasks)
 
 
 @plugin.command
@@ -1154,26 +1154,27 @@ async def yell(ctx: lightbulb.SlashContext) -> None:
                 await ctx.respond(f"Yelling in this map is still on cooldown for {diff.total_seconds()} seconds")
                 return
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Yelling...", flags=hikari.MessageFlag.LOADING)
-    async with map_to_use.cond:
-        active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
-        active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Can't find active location")
-        location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
-        locations_yelled_in_for_specs = []
-        for location_channel in location_channels:
-            location = await stringEnforcer.ensure_type(get_location_channels_location(location_channel), ctx, f"Can't find location for {location_channel.id}")
-            message = f"{player.display_name} yelled {ctx.options['message']}{' from ' + active_location if location.lower() != active_location.lower() else ''}"
-            nullable_spectator_channel = find_spectator_channel(guild, map_to_use, location)
-            if nullable_spectator_channel is not None and location not in locations_yelled_in_for_specs:
-                specator_channel = nullable_spectator_channel
-                await specator_channel.send(message, mentions_everyone=False)
-                locations_yelled_in_for_specs.append(location)
-            if location_channel.id != active_channel.id and isinstance(location_channel, hikari.TextableGuildChannel):
-                await location_channel.send(message, mentions_everyone=False)
-        map_to_use.reset_yell_cooldown(player.id)
-        channel = guild.get_channel(ctx.channel_id) 
-        if channel is not None:
-            await log_action_to_flint(ctx, "yell", player, channel)
-        await ctx.respond(f"You yelled {ctx.options['message']}")
+    active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
+    active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Can't find active location")
+    location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
+    locations_yelled_in_for_specs = []
+    async_tasks = []
+    for location_channel in location_channels:
+        location = await stringEnforcer.ensure_type(get_location_channels_location(location_channel), ctx, f"Can't find location for {location_channel.id}")
+        message = f"{player.display_name} yelled {ctx.options['message']}{' from ' + active_location if location.lower() != active_location.lower() else ''}"
+        nullable_spectator_channel = find_spectator_channel(guild, map_to_use, location)
+        if nullable_spectator_channel is not None and location not in locations_yelled_in_for_specs:
+            specator_channel = nullable_spectator_channel
+            async_tasks.append(asyncio.create_task(specator_channel.send(message, mentions_everyone=False)))
+            locations_yelled_in_for_specs.append(location)
+        if location_channel.id != active_channel.id and isinstance(location_channel, hikari.TextableGuildChannel):
+            async_tasks.append(asyncio.create_task(location_channel.send(message, mentions_everyone=False)))
+    map_to_use.reset_yell_cooldown(player.id)
+    channel = guild.get_channel(ctx.channel_id) 
+    if channel is not None:
+        await log_action_to_flint(ctx, "yell", player, channel)
+    async_tasks.append(asyncio.create_task(ctx.respond(f"You yelled {ctx.options['message']}")))
+    await asyncio.gather(*async_tasks)
 
 @plugin.command
 @lightbulb.option("message", "The message you want to whisper", type=str)
@@ -1224,40 +1225,39 @@ async def whisper(ctx: lightbulb.SlashContext) -> None:
                 await ctx.respond(f"Whispering in this map is still on cooldown for {diff.total_seconds()} seconds")
                 return
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Whispering...", flags=hikari.MessageFlag.LOADING)
-    async with map_to_use.cond:
-        active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
-        target_active_channel = await textableGuildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, target, map_to_use), ctx, "Can't find targets's active channel in the map")
-        active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Can't find where you are somehow, contact an admin")
-        target_active_location = get_location_channels_location(target_active_channel)
-        if active_location != target_active_location:
-            await ctx.respond(f"You must be in the same location as {target.mention} to whisper to them.")
+    active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
+    target_active_channel = await textableGuildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, target, map_to_use), ctx, "Can't find targets's active channel in the map")
+    active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Can't find where you are somehow, contact an admin")
+    target_active_location = get_location_channels_location(target_active_channel)
+    if active_location != target_active_location:
+        await ctx.respond(f"You must be in the same location as {target.mention} to whisper to them.")
+        return
+    await target_active_channel.send(f"{player.mention} ({player.display_name}) whispered to you:\n\n{ctx.options['message']}")
+    was_overheard = settings.whisper_percentage > 0 and random.randint(1, 100) <= settings.whisper_percentage
+    if was_overheard:
+        nullable_category = get_category_of_channel(guild, active_channel.id)  
+        if nullable_category is None:
             return
-        await target_active_channel.send(f"{player.mention} ({player.display_name}) whispered to you:\n\n{ctx.options['message']}")
-        was_overheard = settings.whisper_percentage > 0 and random.randint(1, 100) <= settings.whisper_percentage
-        if was_overheard:
-            nullable_category = get_category_of_channel(guild, active_channel.id)  
-            if nullable_category is None:
-                return
-            map_category: hikari.GuildChannel = nullable_category
-            chat_channels = get_channels_in_category(guild, map_category)
-            for chat_channel in chat_channels:
-                if chat_channel == active_channel or chat_channel == target_active_channel or not isinstance(chat_channel, hikari.TextableGuildChannel):
-                    continue
-                chat_text_channel: hikari.TextableGuildChannel = chat_channel
-                chat_channel_location = get_location_channels_location(chat_text_channel)
-                if chat_channel_location == active_location:
-                    await chat_channel.send(f"You overheard {player.mention} ({player.display_name}) whisper to {target.mention} ({target.display_name}):\n\n{ctx.options['message']}")
-        nullable_spectator_text_channel = find_spectator_channel(guild, map_to_use, active_location)
-        if nullable_spectator_text_channel is None:
-            return
-        spectator_text_channel: hikari.TextableGuildChannel = nullable_spectator_text_channel
-        overheard_text = " (and overheard by everyone else)" if was_overheard else ""
-        await spectator_text_channel.send(f"{player.mention} ({player.display_name}) whispered{overheard_text} to {target.mention} ({target.display_name}):\n\n{ctx.options['message']}")
-        map_to_use.reset_whisper_cooldown(player.id)
-        channel = guild.get_channel(ctx.channel_id) 
-        if channel is not None:
-            await log_action_to_flint(ctx, "whisper", player, channel)
-        await ctx.respond(f"You whispered to {target.mention} ({target.display_name}) :\n\n{ctx.options['message']}")
+        map_category: hikari.GuildChannel = nullable_category
+        chat_channels = get_channels_in_category(guild, map_category)
+        for chat_channel in chat_channels:
+            if chat_channel == active_channel or chat_channel == target_active_channel or not isinstance(chat_channel, hikari.TextableGuildChannel):
+                continue
+            chat_text_channel: hikari.TextableGuildChannel = chat_channel
+            chat_channel_location = get_location_channels_location(chat_text_channel)
+            if chat_channel_location == active_location:
+                await chat_channel.send(f"You overheard {player.mention} ({player.display_name}) whisper to {target.mention} ({target.display_name}):\n\n{ctx.options['message']}")
+    nullable_spectator_text_channel = find_spectator_channel(guild, map_to_use, active_location)
+    if nullable_spectator_text_channel is None:
+        return
+    spectator_text_channel: hikari.TextableGuildChannel = nullable_spectator_text_channel
+    overheard_text = " (and overheard by everyone else)" if was_overheard else ""
+    await spectator_text_channel.send(f"{player.mention} ({player.display_name}) whispered{overheard_text} to {target.mention} ({target.display_name}):\n\n{ctx.options['message']}")
+    map_to_use.reset_whisper_cooldown(player.id)
+    channel = guild.get_channel(ctx.channel_id) 
+    if channel is not None:
+        await log_action_to_flint(ctx, "whisper", player, channel)
+    await ctx.respond(f"You whispered to {target.mention} ({target.display_name}) :\n\n{ctx.options['message']}")
     
 @plugin.command
 @lightbulb.option("location-name", "The location you want to peek at", type=str)
@@ -1305,36 +1305,35 @@ async def peek(ctx: lightbulb.SlashContext) -> None:
                 await ctx.respond(f"Peeking in this map is still on cooldown for {diff.total_seconds()} seconds")
                 return
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Peeking...", flags=hikari.MessageFlag.LOADING)
-    async with map_to_use.cond:
-        was_seen = settings.peek_percentage > 0 and random.randint(1, 100) <= settings.peek_percentage
-        if was_seen:
-            nullable_category = get_category_of_channel(guild, active_channel.id)  
-            if nullable_category is None:
-                return
-            map_category: hikari.GuildChannel = nullable_category
-            chat_channels = get_channels_in_category(guild, map_category)
-            for chat_channel in chat_channels:
-                if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
-                    continue
-                chat_text_channel: hikari.GuildTextChannel = chat_channel
-                chat_channel_location = get_location_channels_location(chat_text_channel)
-                if chat_channel_location == target_location:
-                    await chat_channel.send(f"You saw {player.mention} ({player.display_name}) peek in to {target_location}")
-        map_to_use.reset_peek_cooldown(player.id)
-        channel = guild.get_channel(ctx.channel_id) 
-        if channel is not None:
-            await log_action_to_flint(ctx, "peek", player, channel)
-        map_channels = get_channels_in_category(guild, category)
-        location_players = await get_players_in_location(ctx.bot, guild, map_channels, target_location)
-        if len(location_players) == 0:
-            await ctx.respond(f"No one is in {target_location}")
+    was_seen = settings.peek_percentage > 0 and random.randint(1, 100) <= settings.peek_percentage
+    if was_seen:
+        nullable_category = get_category_of_channel(guild, active_channel.id)  
+        if nullable_category is None:
             return
-        if len(location_players) == 1:
-            p = location_players[0]
-            await ctx.respond(f"{p.mention} ({p.display_name}) is in {target_location}")
-            return
-        players_string = ', '.join(map(lambda p: f"{p.mention} ({p.display_name})", location_players))
-        await ctx.respond(f"{players_string} are in {target_location}")
+        map_category: hikari.GuildChannel = nullable_category
+        chat_channels = get_channels_in_category(guild, map_category)
+        for chat_channel in chat_channels:
+            if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+                continue
+            chat_text_channel: hikari.GuildTextChannel = chat_channel
+            chat_channel_location = get_location_channels_location(chat_text_channel)
+            if chat_channel_location == target_location:
+                await chat_channel.send(f"You saw {player.mention} ({player.display_name}) peek in to {target_location}")
+    map_to_use.reset_peek_cooldown(player.id)
+    channel = guild.get_channel(ctx.channel_id) 
+    if channel is not None:
+        await log_action_to_flint(ctx, "peek", player, channel)
+    map_channels = get_channels_in_category(guild, category)
+    location_players = await get_players_in_location(ctx.bot, guild, map_channels, target_location)
+    if len(location_players) == 0:
+        await ctx.respond(f"No one is in {target_location}")
+        return
+    if len(location_players) == 1:
+        p = location_players[0]
+        await ctx.respond(f"{p.mention} ({p.display_name}) is in {target_location}")
+        return
+    players_string = ', '.join(map(lambda p: f"{p.mention} ({p.display_name})", location_players))
+    await ctx.respond(f"{players_string} are in {target_location}")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
@@ -1423,10 +1422,12 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         if chat_channel_location == location:
             webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
             display_name: hikari.UndefinedOr[str] = event.message.member.display_name if event.message.member is not None else hikari.UNDEFINED
+            async_tasks = []
             for webhook in webhooks:
                 if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
                     continue
-                await execute_mirrored_webhook(plugin.bot, webhook, display_name, event.message, chat_text_channel)
+                async_tasks.append(asyncio.create_task(execute_mirrored_webhook(plugin.bot, webhook, display_name, event.message, chat_text_channel)))
+            await asyncio.gather(*async_tasks)
 
     location_players = await get_players_in_location(bot, guild, chat_channels, location)
     other_players_in_channel = list(filter(lambda p: event.message.member is None or p.id != event.message.member.id, location_players))
@@ -1446,6 +1447,23 @@ async def mirror_messages(plugin: lightbulb.Plugin, event: hikari.MessageCreateE
         if not (spectator_webhook.name == WEBHOOK_NAME and isinstance(spectator_webhook, hikari.ExecutableWebhook)):
             continue
         await execute_mirrored_webhook(plugin.bot, spectator_webhook, display_name, event.message, spectator_text_channel)
+
+async def check_for_edited_message_in_channel_and_edit(bot: hikari.GatewayBot, player: hikari.UndefinedNoneOr[hikari.Member], chat_channel: hikari.GuildTextChannel, location: str, old_message: hikari.UndefinedNoneOr[str], new_message: hikari.UndefinedNoneOr[str]) -> None:
+    chat_text_channel: hikari.GuildTextChannel = chat_channel
+    chat_channel_location = get_location_channels_location(chat_text_channel)
+    if chat_channel_location == location:
+        webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
+        display_name: hikari.UndefinedOr[str] = player.display_name if player is not None and player is not hikari.UNDEFINED else hikari.UNDEFINED
+        for webhook in webhooks:
+            if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
+                continue
+            found_message = False
+            if old_message:
+                found_message = await find_message_in_channel(bot, chat_text_channel, old_message)
+            if found_message and found_message.content:
+                if found_message.content.startswith("*In reply to"):
+                    new_content = "\n".join(found_message.content.split("\n")[:2] + ([new_message] if new_message else ["*Message deleted*"]))
+                await webhook.edit_message(found_message.id, content=new_message)    
 
 @plugin.listener(hikari.GuildMessageUpdateEvent, bind=True) # type: ignore[misc]
 async def mirror_edits(plugin: lightbulb.Plugin, event: hikari.GuildMessageUpdateEvent):
@@ -1492,26 +1510,18 @@ async def mirror_edits(plugin: lightbulb.Plugin, event: hikari.GuildMessageUpdat
     chat_channels = get_channels_in_category(guild, category)
     server_settings = settings_manager.get_settings(guild.id)
     player = event.message.member
+    async_tasks = []
     for chat_channel in chat_channels:
         if chat_channel == channel or not isinstance(chat_channel, hikari.GuildTextChannel):
             continue
-        chat_text_channel: hikari.GuildTextChannel = chat_channel
-        chat_channel_location = get_location_channels_location(chat_text_channel)
-        if chat_channel_location == location:
-            webhooks = await bot.rest.fetch_channel_webhooks(chat_text_channel)
-            display_name: hikari.UndefinedOr[str] = player.display_name if player is not None and player is not hikari.UNDEFINED else hikari.UNDEFINED
-            for webhook in webhooks:
-                if not(webhook.name == WEBHOOK_NAME) or not isinstance(webhook, hikari.ExecutableWebhook):
-                    continue
-                found_message = False
-                if event.old_message.content:
-                    found_message = await find_message_in_channel(plugin.bot, chat_text_channel, event.old_message.content)
-                if found_message and found_message.content:
-                    new_content = event.content
-                    if found_message.content.startswith("*In reply to"):
-                        new_content = "\n".join(found_message.content.split("\n")[:2] + ([new_content] if new_content else ["*Message deleted*"]))
-                    await webhook.edit_message(found_message.id, content=new_content)
-
+        async_tasks.append(asyncio.create_task(check_for_edited_message_in_channel_and_edit(
+            plugin.bot, 
+            player, 
+            chat_channel, 
+            location, 
+            event.old_message.content, 
+            event.content)))
+    await asyncio.gather(*async_tasks)
     location_players = await get_players_in_location(bot, guild, chat_channels, location)
     other_players_in_channel = list(filter(lambda p: player is None or player is hikari.UNDEFINED or p.id != player.id, location_players))
     nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, location)

@@ -30,13 +30,13 @@ bot.add_plugin(map.plugin)
 
 @bot.listen(lightbulb.CommandErrorEvent)
 async def on_error(event: lightbulb.CommandErrorEvent) -> None:
+    if isinstance(event.exception, lightbulb.CommandInvocationError) and isinstance(event.exception.__cause__, TypeEnforcementError):
+        return
+    
     if isinstance(event.exception, lightbulb.CommandInvocationError):
         raise event.exception
 
     if isinstance(event.exception, lightbulb.errors.CommandNotFound):
-        return
-
-    if isinstance(event.exception, TypeEnforcementError):
         return
 
     if isinstance(event.exception, lightbulb.CommandIsOnCooldown):

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import hikari
 import lightbulb
@@ -327,12 +328,22 @@ def get_player_location_channel_in_map(guild: hikari.Guild, player: hikari.Membe
     ]
     return filtered_player_location_channels[0] if filtered_player_location_channels else None
 
-async def get_player_to_location_channel_map_for_role(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, role: hikari.Role) -> dict[hikari.Member, hikari.GuildTextChannel]:
-    player_to_location_channel_map = {}
+async def get_players_in_map_with_role(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, role: hikari.Role) -> list[hikari.Member]:
+    players_with_role_in_map = []
     all_location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
     for location_channel in all_location_channels:
         player = await get_player_from_location(ctx.bot, guild, location_channel)
         if player is not None and role.id in player.role_ids:
+            players_with_role_in_map.append(player)
+    return players_with_role_in_map
+
+async def get_player_to_location_channel_map_for_players(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players: list[hikari.Member]) -> dict[hikari.Member, hikari.GuildTextChannel]:
+    player_to_location_channel_map = {}
+    all_location_channels = get_all_location_channels_for_map(guild, map_to_use.name)
+    player_ids = list(map(lambda p: p.id, players))
+    for location_channel in all_location_channels:
+        player = await get_player_from_location(ctx.bot, guild, location_channel)
+        if player is not None and player.id in player_ids:
             player_to_location_channel_map[player] = location_channel
     return player_to_location_channel_map
 
@@ -496,6 +507,128 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
         flags=message.flags
     )
 
+async def edit_location_to_move(player: hikari.Member, location_channel: hikari.GuildChannel, new_location: str) -> tuple[bool, float]:
+    try:
+        await location_channel.edit(name=get_player_location_name(player, new_location))
+        return True, 0
+    except hikari.RateLimitedError as e:
+        return False, e.retry_after
+
+async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players: list[hikari.Member], new_location: str, team_name: Optional[str], ignore_cooldown: bool) -> None:
+    settings = settings_manager.get_settings(guild.id)
+    player = await interactionMemberEnforcer.ensure_type(ctx.interaction.member, ctx, "Could not determine which member issued the command")
+    async with map_to_use.cond:
+        moved_players = {}
+        players_left_behind = []
+        players_already_there = []
+
+        if new_location not in map_to_use.locations:
+            await ctx.respond(f"{new_location} is not in the map you are moving with")
+            return
+        
+        if new_location in map_to_use.role_requirements:
+            found_good_role = False
+            for role_id in player.role_ids:
+                if role_id in map_to_use.role_requirements[new_location]:
+                    found_good_role = True
+                    break
+            if not found_good_role:
+                await ctx.respond(f"You do not have the required role to move to {new_location}")
+                return
+        
+        player_to_location_channel = await get_player_to_location_channel_map_for_players(ctx, guild, map_to_use, players)
+
+        async def attempt_edit(player: hikari.Member, location_channel: hikari.GuildChannel, location: str):
+            result, _ = await edit_location_to_move(player, location_channel, new_location)
+            return player, result, location
+        
+        async_tasks = []
+        for player, location_channel in player_to_location_channel.items():
+            location = get_location_channels_location(location_channel)
+            if location is None:
+                players_left_behind.append((player, "Could not determine current location"))
+                continue
+            if location == new_location:
+                players_already_there.append(player)
+                continue
+            if not ignore_cooldown and player.id in map_to_use.cooldowns:
+                last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
+                next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
+                diff = next_possible_movement_time - datetime.datetime.now()
+                if diff.total_seconds() > 0:
+                    players_left_behind.append((player, f"Cooldown has {diff.total_seconds()} seconds left"))
+                    continue
+            async_tasks.append(asyncio.create_task(attempt_edit(player, location_channel, location)))
+        await asyncio.gather(*async_tasks)
+        for task in async_tasks:
+            player, success, location = task.result()
+            if success:
+                moved_players[location] = moved_players.get(location, []) + [player]
+                map_to_use.reset_cooldown(player.id)
+            else:
+                players_left_behind.append((player, f"Discord rate limits"))
+
+        moved_players_list = flatten_list_of_lists(moved_players.values())
+        if not moved_players:
+            if len(players) == 1 and players_left_behind:
+                await ctx.respond(f"Could not move to {new_location}: {players_left_behind[0][1]}")
+                return
+            elif len(players) == 1 and players_already_there:
+                await ctx.respond(f"Already in {new_location}")
+                return
+            await ctx.respond(f"No players were moved, all players were either already in {new_location} or left behind due to cooldowns or missing roles")
+            return
+        async_tasks = []
+        if settings.announce_entry and player_to_location_channel:
+            location_channel = list(player_to_location_channel.values())[0]
+            category = get_category_of_channel(guild, location_channel.id)
+            if category is not None:
+                chat_channels = get_channels_in_category(guild, category)
+                moved_player_ids = set(map(lambda p: p.id, moved_players_list))
+                moved_players_string = ", ".join(map(lambda p: p.display_name, moved_players_list))
+                for chat_channel in chat_channels:
+                    if not isinstance(chat_channel, hikari.TextableGuildChannel):
+                        continue
+                    chat_player = await get_player_from_location(ctx.bot, guild, chat_channel) # shouldn't actually wait for it most of the time
+                    if chat_player is None or chat_player.id in moved_player_ids:
+                        continue
+                    chat_text_channel: hikari.TextableGuildChannel = chat_channel
+                    chat_channel_location = get_location_channels_location(chat_text_channel)
+                    if chat_channel_location == new_location:
+                        async_tasks.append(asyncio.create_task(chat_text_channel.send(f"{moved_players_string} {'have' if len(moved_players_list) > 1 else 'has'} entered {new_location}")))
+        await asyncio.gather(*async_tasks)
+        nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, new_location)
+        to_message = None
+        movees_name = f"Team {team_name}" if team_name is not None else players[0].display_name
+        if nullable_spectator_to_text_channel is not None:
+            to_message = await nullable_spectator_to_text_channel.send(
+                f"{movees_name} moved to {new_location}")
+        async_tasks = []
+        for location, players in moved_players.items():
+            nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, location)
+            if nullable_spectator_from_text_channel is not None:
+                location_text = new_location if to_message is None else f"[{new_location}]({to_message.make_link(guild)})"
+                async_tasks.append(asyncio.create_task(nullable_spectator_from_text_channel.send(
+                    f"{movees_name} moved from {location} to {location_text}")))
+        if settings.should_track_roles:
+            for player in flatten_list_of_lists(moved_players.values()):
+                async_tasks.append(asyncio.create_task(set_new_location_role(ctx, player, guild, map_to_use.name, new_location)))
+        channel = guild.get_channel(ctx.channel_id)
+        if channel is not None:
+            for player in flatten_list_of_lists(moved_players.values()):
+                async_tasks.append(asyncio.create_task(log_action_to_flint(ctx, "move", player, channel)))
+        if len(players) > 1:
+            async_tasks.append(asyncio.create_task(ctx.respond(
+                f"""Players moved to {new_location}: {', '.join(map(lambda p: p.display_name, flatten_list_of_lists(moved_players.values())))}
+    Players left behind: {', '.join(map(lambda p: f"{p[0].display_name} ({p[1]})", players_left_behind)) if players_left_behind else 'None'}
+    Players already there: {', '.join(map(lambda p: p.display_name, players_already_there)) if players_already_there else 'None'}"""
+            )))
+        else:
+            async_tasks.append(asyncio.create_task(ctx.respond(
+                f"""Player moved to {new_location}""")))
+        async_tasks.append(asyncio.create_task(locations_message(ctx, guild, map_to_use, flatten_list_of_lists(moved_players.values()), to_message, new_location)))
+        await asyncio.gather(*async_tasks)
+
 def message_is_bot_or_commandlike(message: hikari.PartialMessage) -> bool:
     return (message.content is not None and message.content is not hikari.UNDEFINED and message.content[0] in ("=", "!", "/", "?", ".")) or (bool(message.author) and message.author.is_bot)
 
@@ -621,51 +754,11 @@ async def move_player(ctx: lightbulb.SlashContext) -> None:
     player = ctx.options['player']
     location = ctx.options['location'].lower()
     map_to_use = await get_map(ctx, guild, map_name)
-    settings = settings_manager.get_settings(guild.id)
     maps_player_is_in = get_maps_player_is_in(guild, player)
     if map_to_use not in maps_player_is_in:
         await ctx.respond(f"{player.display_name} is not in {map_name}")
         return
-    async with map_to_use.cond:
-        if location not in map_to_use.locations:
-            await ctx.respond(f"{location} is not in the map you are moving with")
-            return
-        active_channel = await textableGuildChannelEnforcer.ensure_type(
-            get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, f"Can't find player's active channel for some reason, please contact admins")
-        active_channel_location = await stringEnforcer.ensure_type(
-            get_location_channels_location(active_channel), ctx, "Could not extract current location of player's active channel, please contact admins")
-        if active_channel_location == location:
-            await ctx.respond(f"Already in {location}")
-            return
-        try:
-            await active_channel.edit(name=get_player_location_name(player, location))
-        except hikari.RateLimitedError as e:
-            await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
-            return
-        map_to_use.reset_cooldown(player.id)
-        await active_channel.send(f"Moved to {location}")
-        if settings.announce_entry:
-            category = get_category_of_channel(guild, active_channel.id)
-            chat_channels = get_channels_in_category(guild, category) if category is not None else []
-            for chat_channel in chat_channels:
-                if chat_channel == active_channel or not isinstance(chat_channel, hikari.TextableGuildChannel):
-                    continue
-                chat_text_channel: hikari.TextableGuildChannel = chat_channel
-                chat_channel_location = get_location_channels_location(chat_text_channel)
-                if chat_channel_location == location:
-                    await chat_text_channel.send(f"{player.display_name} has entered {location}")
-        await ctx.respond(f"You have moved {player.display_name} to {location}", flags=hikari.MessageFlag.NONE)
-    nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
-    nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
-    to_message = None
-    if nullable_spectator_to_text_channel is not None:
-        to_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
-    if nullable_spectator_from_text_channel is not None:
-        location_text = location if to_message is None else f"[{location}]({to_message.make_link(guild)})"
-        await nullable_spectator_from_text_channel.send(f"{player.display_name} sent to {location_text} by admins")
-    if settings.should_track_roles:
-        await set_new_location_role(ctx, player, guild, map_to_use.name, location)
-    await locations_message(ctx, guild, map_to_use, [player], to_message, location)
+    await move_players_to_location(ctx, guild, map_to_use, [player], location, None, True)
 
 @plugin.command
 @lightbulb.option("location", "Where you want to move the player", type=str)
@@ -679,6 +772,7 @@ async def move_team(ctx: lightbulb.SlashContext) -> None:
     guild = await get_guild(ctx)
     new_location: str = ctx.options['location'].lower()
     team_role: hikari.Role = ctx.options['team']
+    map_to_use = await get_map(ctx, guild, map_name)
     player = await interactionMemberEnforcer.ensure_type(ctx.interaction.member, ctx, "Somehow couldn't get player from the command")
     if "tribe" not in team_role.name.lower() and "team" not in team_role.name.lower():
         await ctx.respond(f"Role {team_role.name} does not contain 'team' or 'tribe', please use a different role")
@@ -686,94 +780,8 @@ async def move_team(ctx: lightbulb.SlashContext) -> None:
     if player and player.permissions & hikari.Permissions.MANAGE_GUILD == 0 and team_role.id not in player.role_ids:
         await ctx.respond("You are not allowed to move other teams, only admins or team members can do that")
         return
-    map_to_use = await get_map(ctx, guild, map_name)
-    settings = settings_manager.get_settings(guild.id)
-    async with map_to_use.cond:
-        moved_players = {}
-        players_left_behind = []
-        players_already_there = []
-
-        if new_location not in map_to_use.locations:
-            await ctx.respond(f"{new_location} is not in the map you are moving with")
-            return
-        
-        if new_location in map_to_use.role_requirements:
-            found_good_role = False
-            for role_id in player.role_ids:
-                if role_id in map_to_use.role_requirements[new_location]:
-                    found_good_role = True
-                    break
-            if not found_good_role:
-                await ctx.respond(f"You do not have the required role to move your team to {new_location}")
-                return
-        
-        player_to_location_channel = await get_player_to_location_channel_map_for_role(ctx, guild, map_to_use, team_role)
-
-        for player, location_channel in player_to_location_channel.items():
-            location = get_location_channels_location(location_channel)
-            if location == new_location:
-                players_already_there.append(player)
-                continue
-            if player.id in map_to_use.cooldowns:
-                last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
-                next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
-                diff = next_possible_movement_time - datetime.datetime.now()
-                if diff.total_seconds() > 0:
-                    players_left_behind.append((player, "Cooldown"))
-                    continue
-            try:
-                await location_channel.edit(name=get_player_location_name(player, new_location))
-                moved_players[location] = moved_players.get(location, []) + [player]
-                map_to_use.reset_cooldown(player.id)
-            except hikari.RateLimitedError as e:
-                players_left_behind.append((player, f"Discord rate limits"))
-                continue
-
-        moved_players_list = flatten_list_of_lists(moved_players.values())
-        if not moved_players:
-            await ctx.respond(f"No players were moved, all players were either already in {new_location} or left behind due to cooldowns or missing roles")
-            return
-        if settings.announce_entry and player_to_location_channel:
-            location_channel = list(player_to_location_channel.values())[0]
-            category = get_category_of_channel(guild, location_channel.id)
-            if category is not None:
-                chat_channels = get_channels_in_category(guild, category)
-                moved_player_ids = set(map(lambda p: p.id, moved_players_list))
-                moved_players_string = ", ".join(map(lambda p: p.display_name, moved_players_list))
-                for chat_channel in chat_channels:
-                    if not isinstance(chat_channel, hikari.TextableGuildChannel):
-                        continue
-                    chat_player = await get_player_from_location(ctx.bot, guild, chat_channel)
-                    if chat_player is None or chat_player.id in moved_player_ids:
-                        continue
-                    chat_text_channel: hikari.TextableGuildChannel = chat_channel
-                    chat_channel_location = get_location_channels_location(chat_text_channel)
-                    if chat_channel_location == new_location:
-                        await chat_text_channel.send(f"{moved_players_string} have entered {new_location}")
-        nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, new_location)
-        to_message = None
-        if nullable_spectator_to_text_channel is not None:
-            to_message = await nullable_spectator_to_text_channel.send(
-                f"Team {team_role.name} moved to {new_location}: {', '.join(map(lambda p: p.display_name, flatten_list_of_lists(moved_players.values())))}")
-        for location, players in moved_players.items():
-            nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, location)
-            if nullable_spectator_from_text_channel is not None:
-                location_text = location if to_message is None else f"[{location}]({to_message.make_link(guild)})"
-                await nullable_spectator_from_text_channel.send(
-                    f"Team {team_role.name} moved from {location} to {location_text}: {', '.join(map(lambda p: p.display_name, players))}")
-        if settings.should_track_roles:
-            for player in flatten_list_of_lists(moved_players.values()):
-                await set_new_location_role(ctx, player, guild, map_to_use.name, new_location)
-        channel = guild.get_channel(ctx.channel_id)
-        if channel is not None:
-            for player in flatten_list_of_lists(moved_players.values()):
-                    await log_action_to_flint(ctx, "move", player, channel)
-        await ctx.respond(
-            f"""Players moved to {new_location}: {', '.join(map(lambda p: p.display_name, flatten_list_of_lists(moved_players.values())))}
-Players left behind: {', '.join(map(lambda p: f"{p[0].display_name} ({p[1]})", players_left_behind)) if players_left_behind else 'None'}
-Players already there: {', '.join(map(lambda p: p.display_name, players_already_there)) if players_already_there else 'None'}"""
-        )
-        await locations_message(ctx, guild, map_to_use, flatten_list_of_lists(moved_players.values()), to_message, new_location)
+    players_to_move = await get_players_in_map_with_role(ctx, guild, map_to_use, team_role)
+    await move_players_to_location(ctx, guild, map_to_use, players_to_move, new_location, team_role.name, True)
 
 @plugin.command
 @lightbulb.option("location", "Where you want to go", type=str)
@@ -799,65 +807,7 @@ async def move(ctx: lightbulb.SlashContext) -> None:
             await ctx.respond(error_message)
             return
         map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
-    async with map_to_use.cond:
-        if location not in map_to_use.locations:
-            await ctx.respond(f"{location} is not in the map you are moving in")
-            return
-        if location in map_to_use.role_requirements:
-            found_good_role = False
-            for role_id in player.role_ids:
-                if role_id in map_to_use.role_requirements[location]:
-                    found_good_role = True
-                    break
-            if not found_good_role:
-                await ctx.respond(f"You do not have the necessary role to enter {location}")
-                return
-        if player.id in map_to_use.cooldowns:
-            last_movement_time: datetime.datetime = map_to_use.cooldowns[player.id]
-            next_possible_movement_time = last_movement_time + datetime.timedelta(minutes=settings.cooldown_minutes)
-            diff = next_possible_movement_time - datetime.datetime.now()
-            if diff.total_seconds() > 0:
-                await ctx.respond(f"Movement in this map is still on cooldown for {diff.total_seconds()} seconds")
-                return
-        active_channel = await textableGuildChannelEnforcer.ensure_type(
-            get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find your active channel for some reason, please contact admins")
-        active_channel_location = await stringEnforcer.ensure_type(
-            get_location_channels_location(active_channel), ctx, "Could not extract current location of active channel, please contact admins")
-        if active_channel_location == location:
-            await ctx.respond(f"Already in {location}")
-            return
-        try:
-            await active_channel.edit(name=get_player_location_name(player, location))
-        except hikari.RateLimitedError as e:
-            await ctx.respond(f"Moving too quickly (for discord rate limits), please wait {e.retry_after} seconds before trying again")
-            return
-        map_to_use.reset_cooldown(player.id)
-        await active_channel.send(f"Moved to {location}")
-        category = get_category_of_channel(guild, active_channel.id)
-        if settings.announce_entry and category is not None:
-            chat_channels = get_channels_in_category(guild, category)
-            for chat_channel in chat_channels:
-                if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
-                    continue
-                chat_text_channel: hikari.GuildTextChannel = chat_channel
-                chat_channel_location = get_location_channels_location(chat_text_channel)
-                if chat_channel_location == location:
-                    await chat_text_channel.send(f"{player.display_name} has entered {location}")
-        await ctx.respond(f"You have moved to {location}", flags=hikari.MessageFlag.NONE)
-    nullable_spectator_from_text_channel = find_spectator_channel(guild, map_to_use, active_channel_location)
-    nullable_spectator_to_text_channel = find_spectator_channel(guild, map_to_use, location)
-    to_message = None
-    if nullable_spectator_to_text_channel is not None:
-        to_message = await nullable_spectator_to_text_channel.send(f"{player.display_name} came from {active_channel_location}")
-    if nullable_spectator_from_text_channel is not None:
-        location_text = location if to_message is None else f"[{location}]({to_message.make_link(guild)})"
-        await nullable_spectator_from_text_channel.send(f"{player.display_name} went to {location_text}")
-    if settings.should_track_roles:
-        await set_new_location_role(ctx, player, guild, map_to_use.name, location)   
-    channel = guild.get_channel(ctx.channel_id) 
-    if channel is not None:
-        await log_action_to_flint(ctx, "move", player, channel)
-    await locations_message(ctx, guild, map_to_use, [player], to_message, location)
+    await move_players_to_location(ctx, guild, map_to_use, [player], location, None, False)
 
 @plugin.command
 @lightbulb.command("whos-here", "Moves to the given location, based on your current map")

@@ -1,7 +1,6 @@
-from typing_extensions import reveal_type
 import lightbulb
 
-from typing import Any, Generic, TypeVar, Optional
+from typing import Generic, TypeVar, Optional
 
 T = TypeVar("T")
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import aiosqlite
-import asyncio
 
 from dataclasses import dataclass
 from typing import Optional

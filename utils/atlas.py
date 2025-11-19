@@ -23,16 +23,16 @@ class Map:
     def __str__(self) -> str:
         return str(self.locations)
 
-    def reset_cooldown(self, player_id: int) -> datetime.datetime:
+    def reset_cooldown(self, player_id: int):
         self.cooldowns[player_id] = datetime.datetime.now()
 
-    def reset_yell_cooldown(self, player_id: int) -> datetime.datetime:
+    def reset_yell_cooldown(self, player_id: int):
         self.yell_cooldowns[player_id] = datetime.datetime.now()
 
-    def reset_whisper_cooldown(self, player_id: int) -> datetime.datetime:
+    def reset_whisper_cooldown(self, player_id: int):
         self.whisper_cooldowns[player_id] = datetime.datetime.now()
 
-    def reset_peek_cooldown(self, player_id: int) -> datetime.datetime:
+    def reset_peek_cooldown(self, player_id: int):
         self.peek_cooldowns[player_id] = datetime.datetime.now()
 
     def add_role_requirement(self, location: str, role_id: int):
@@ -79,40 +79,28 @@ class Atlas:
 
     def get_maps_in_server(self, server_id: int) -> list[Map]:
         server_atlas = self._server_atlases.get(server_id, None)
-        return server_atlas._maps.values() if server_atlas is not None else []
+        return list(server_atlas._maps.values()) if server_atlas is not None else []
 
     async def add_location(self, server_id: int, map_name: str, location_name: str) -> Optional[Map]:
-        server_atlas = self._server_atlases.get(server_id, None)
-        if server_atlas is None:
+        if (server_atlas := self._server_atlases.get(server_id, None)) is None or (fetched_map := server_atlas.get_map(map_name.lower())) is None:
             return None
-        fetched_map = server_atlas.get_map(map_name.lower())
-        if fetched_map is None:
+        if location_name.lower() in fetched_map.locations:
             return None
-        if location_name in fetched_map.locations:
-            return None
-        fetched_map.locations.append(location_name)
+        fetched_map.locations.append(location_name.lower())
         await self._save_map(server_id, fetched_map)
         return fetched_map
 
     async def remove_location(self, server_id: int, map_name: str, location_name: str) -> Optional[Map]:
-        server_atlas = self._server_atlases.get(server_id, None)
-        if server_atlas is None:
+        if (server_atlas := self._server_atlases.get(server_id, None)) is None or (fetched_map := server_atlas.get_map(map_name.lower())) is None:
             return None
-        fetched_map = server_atlas.get_map(map_name.lower())
-        if fetched_map is None:
-            return None
-        if location_name not in fetched_map.locations:
+        if location_name.lower() not in fetched_map.locations:
             return None
         fetched_map.locations.remove(location_name.lower())
         await self._save_map(server_id, fetched_map)
         return fetched_map
     
     async def toggle_talking(self, server_id: int, map_name: str) -> Optional[bool]:
-        server_atlas = self._server_atlases.get(server_id, None)
-        if server_atlas is None:
-            return None
-        fetched_map = server_atlas.get_map(map_name.lower())
-        if fetched_map is None:
+        if (server_atlas := self._server_atlases.get(server_id, None)) is None or (fetched_map := server_atlas.get_map(map_name.lower())) is None:
             return None
         fetched_map.talking_enabled = not fetched_map.talking_enabled
         await self._save_map(server_id, fetched_map)

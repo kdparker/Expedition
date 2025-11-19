@@ -250,7 +250,6 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
         new_message += f"{new_location.capitalize()}: {players_list}\n"
 
     if not new_message:
-        #await locations_channel_message.delete()
         return
     
     current_message = ""
@@ -269,6 +268,10 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
             await locations_channel.send(current_message)
         else:
             await locations_channel_message_array[current_message_index].edit(content=current_message)
+    current_message_index += 1
+    while current_message_index < len(locations_channel_message_array):
+        await locations_channel_message_array[current_message_index].delete()
+        current_message_index += 1
 
 def get_all_location_channels_for_map(guild: hikari.Guild, map_name: str) -> list[hikari.GuildChannel]:
     map_chat_category_ids: list[int] = []

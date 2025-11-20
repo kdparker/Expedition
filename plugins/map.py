@@ -202,17 +202,28 @@ def separate_link_markdown(s: str) -> Optional[tuple[str, str]]:
     match = re.match(link_pattern, s)
     return (match.group(1), match.group(2)) if match else None
 
+cached_locations_channel_message_arrays: dict[str, list[hikari.Message]] = {}
+async def get_locations_channel_message_array(locations_channel: hikari.TextableGuildChannel, map_to_use: Map) -> list[hikari.Message]:
+    if map_to_use.name in cached_locations_channel_message_arrays:
+        return cached_locations_channel_message_arrays[map_to_use.name]
+    locations_channel_message_array = []
+    async for message in locations_channel.fetch_history():
+        locations_channel_message_array.append(message)
+
+    locations_channel_message_array = locations_channel_message_array[::-1]
+    return locations_channel_message_array
+    
+def cache_locations_channel_message_array(map_name: str, message_array: list[hikari.Message]) -> None:
+    cached_locations_channel_message_arrays[map_name] = message_array
+
 async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players_changed: list[hikari.Member], change_message: Optional[hikari.Message], new_location: Optional[str]) -> None:
     locations_channel = find_locations_channel(guild, map_to_use)
     if not locations_channel:
         return
     locations_channel_message_array = []
 
-    async for message in locations_channel.fetch_history():
-        locations_channel_message_array.append(message)
-
-    locations_channel_message_array = locations_channel_message_array[::-1]
-    locations_channel_message_str = "\n".join(list(map(lambda m: m.content, locations_channel_message_array)))
+    locations_channel_message_array = await get_locations_channel_message_array(locations_channel, map_to_use)
+    locations_channel_message_str = "\n".join(list(map(lambda m: m.content if m.content is not None else "", locations_channel_message_array)))
     if not locations_channel_message_str and new_location is not None:
         players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
         await locations_channel.send(f"{new_location.capitalize()}: {players_list}\n")
@@ -255,6 +266,7 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
     
     current_message = ""
     current_message_index = 0
+    new_locations_channel_message_array = []
     for line in new_message.split('\n'):
         if len(current_message) + len(line) > 1800:
             if current_message_index >= len(locations_channel_message_array):
@@ -266,9 +278,10 @@ async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, ma
         current_message += "\n" + line
     if current_message:
         if current_message_index >= len(locations_channel_message_array):
-            await locations_channel.send(current_message)
+            new_locations_channel_message_array.append(await locations_channel.send(current_message))
         else:
-            await locations_channel_message_array[current_message_index].edit(content=current_message)
+            new_locations_channel_message_array.append(await locations_channel_message_array[current_message_index].edit(content=current_message))
+    cache_locations_channel_message_array(map_to_use.name, new_locations_channel_message_array)
     current_message_index += 1
     while current_message_index < len(locations_channel_message_array):
         await locations_channel_message_array[current_message_index].delete()
@@ -729,6 +742,7 @@ async def remove_player(ctx: lightbulb.SlashContext) -> None:
     async with fetched_map.cond:
         for channel in get_player_location_channels(guild, player, fetched_map.name):
             await channel.delete()
+        await locations_message(ctx, guild, fetched_map, [player], None, None)
     nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, active_location)
     if nullable_spectator_text_channel is not None:
         await nullable_spectator_text_channel.send(f"{player.mention} removed from {fetched_map.name}")
@@ -737,7 +751,6 @@ async def remove_player(ctx: lightbulb.SlashContext) -> None:
         roles = await player.fetch_roles()
         roles = list(filter(lambda r: not r.name.startswith(f"expedition-{fetched_map.name.lower()}-"), roles))
         await player.edit(roles=roles)
-    await locations_message(ctx, guild, fetched_map, [player], None, None)
     await ctx.respond(f"{get_sanitized_player_name(player)} removed from {fetched_map.name}")
 
 @plugin.command

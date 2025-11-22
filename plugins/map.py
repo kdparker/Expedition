@@ -216,76 +216,78 @@ async def get_locations_channel_message_array(locations_channel: hikari.Textable
 def cache_locations_channel_message_array(map_name: str, message_array: list[hikari.Message]) -> None:
     cached_locations_channel_message_arrays[map_name] = message_array
 
+locations_message_cond = asyncio.Condition()
 async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players_changed: list[hikari.Member], change_message: Optional[hikari.Message], new_location: Optional[str]) -> None:
-    locations_channel = find_locations_channel(guild, map_to_use)
-    if not locations_channel:
-        return
-    locations_channel_message_array = []
+    async with locations_message_cond:
+        locations_channel = find_locations_channel(guild, map_to_use)
+        if not locations_channel:
+            return
+        locations_channel_message_array = []
 
-    locations_channel_message_array = await get_locations_channel_message_array(locations_channel, map_to_use)
-    locations_channel_message_str = "\n".join(list(map(lambda m: m.content if m.content is not None else "", locations_channel_message_array)))
-    if not locations_channel_message_str and new_location is not None:
-        players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
-        await locations_channel.send(f"{new_location.capitalize()}: {players_list}\n")
-        return
-    
-    new_message = ""
-    locations_visited = set()
-    sanitized_player_names = set(map(lambda player_changed: get_sanitized_player_name(player_changed), players_changed))
-    for line in locations_channel_message_str.split('\n'):
-        if line.strip() == "":
-            new_message += line + "\n"
-            continue
-        split_line = line.split(':')
-        if len(split_line) < 2:
-            new_message += line + "\n"
+        locations_channel_message_array = await get_locations_channel_message_array(locations_channel, map_to_use)
+        locations_channel_message_str = "\n".join(list(map(lambda m: m.content if m.content is not None else "", locations_channel_message_array)))
+        if not locations_channel_message_str and new_location is not None:
+            players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
+            await locations_channel.send(f"{new_location.capitalize()}: {players_list}\n")
+            return
+        
+        new_message = ""
+        locations_visited = set()
+        sanitized_player_names = set(map(lambda player_changed: get_sanitized_player_name(player_changed), players_changed))
+        for line in locations_channel_message_str.split('\n'):
+            if line.strip() == "":
+                new_message += line + "\n"
+                continue
+            split_line = line.split(':')
+            if len(split_line) < 2:
+                new_message += line + "\n"
 
-        location = split_line[0].strip().lower()
-        locations_visited.add(location)
-        players_with_links: list[tuple[str, str]] = [
-            link
-            for entry in ":".join(split_line[1:]).strip().split(',')
-            if (link := separate_link_markdown(entry.strip())) is not None
-        ]
-        new_players_with_links = []
-        for player_with_link in players_with_links:
-            if player_with_link[0].lower() not in sanitized_player_names:
-                new_players_with_links.append(player_with_link)
-        if new_location is not None and location == new_location.lower():
-            for player_changed in players_changed:
-                new_players_with_links.append((get_sanitized_player_name(player_changed).capitalize(), change_message.make_link(guild) if change_message else "https://example.com"))
-        if len(new_players_with_links) == 0:
-            continue
-        new_message += f"{location.capitalize()}: {', '.join(map(lambda entry: f'[{entry[0]}]({entry[1]})', new_players_with_links))}\n"
-    if new_location is not None and new_location not in locations_visited:
-        players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
-        new_message += f"{new_location.capitalize()}: {players_list}\n"
+            location = split_line[0].strip().lower()
+            locations_visited.add(location)
+            players_with_links: list[tuple[str, str]] = [
+                link
+                for entry in ":".join(split_line[1:]).strip().split(',')
+                if (link := separate_link_markdown(entry.strip())) is not None
+            ]
+            new_players_with_links = []
+            for player_with_link in players_with_links:
+                if player_with_link[0].lower() not in sanitized_player_names:
+                    new_players_with_links.append(player_with_link)
+            if new_location is not None and location == new_location.lower():
+                for player_changed in players_changed:
+                    new_players_with_links.append((get_sanitized_player_name(player_changed).capitalize(), change_message.make_link(guild) if change_message else "https://example.com"))
+            if len(new_players_with_links) == 0:
+                continue
+            new_message += f"{location.capitalize()}: {', '.join(map(lambda entry: f'[{entry[0]}]({entry[1]})', new_players_with_links))}\n"
+        if new_location is not None and new_location not in locations_visited:
+            players_list = ", ".join(list(map(lambda player_changed: f"[{get_sanitized_player_name(player_changed).capitalize()}]({change_message.make_link(guild) if change_message else 'https://example.com'})", players_changed)))
+            new_message += f"{new_location.capitalize()}: {players_list}\n"
 
-    if not new_message:
-        return
-    
-    current_message = ""
-    current_message_index = 0
-    new_locations_channel_message_array = []
-    for line in new_message.split('\n'):
-        if len(current_message) + len(line) > 1800:
+        if not new_message:
+            return
+        
+        current_message = ""
+        current_message_index = 0
+        new_locations_channel_message_array = []
+        for line in new_message.split('\n'):
+            if len(current_message) + len(line) > 1800:
+                if current_message_index >= len(locations_channel_message_array):
+                    await locations_channel.send(current_message)
+                else:
+                    await locations_channel_message_array[current_message_index].edit(content=current_message)
+                current_message = ""
+                current_message_index += 1
+            current_message += "\n" + line
+        if current_message:
             if current_message_index >= len(locations_channel_message_array):
-                await locations_channel.send(current_message)
+                new_locations_channel_message_array.append(await locations_channel.send(current_message))
             else:
-                await locations_channel_message_array[current_message_index].edit(content=current_message)
-            current_message = ""
-            current_message_index += 1
-        current_message += "\n" + line
-    if current_message:
-        if current_message_index >= len(locations_channel_message_array):
-            new_locations_channel_message_array.append(await locations_channel.send(current_message))
-        else:
-            new_locations_channel_message_array.append(await locations_channel_message_array[current_message_index].edit(content=current_message))
-    cache_locations_channel_message_array(map_to_use.name, new_locations_channel_message_array)
-    current_message_index += 1
-    while current_message_index < len(locations_channel_message_array):
-        await locations_channel_message_array[current_message_index].delete()
+                new_locations_channel_message_array.append(await locations_channel_message_array[current_message_index].edit(content=current_message))
+        cache_locations_channel_message_array(map_to_use.name, new_locations_channel_message_array)
         current_message_index += 1
+        while current_message_index < len(locations_channel_message_array):
+            await locations_channel_message_array[current_message_index].delete()
+            current_message_index += 1
 
 def get_all_location_channels_for_map(guild: hikari.Guild, map_name: str) -> list[hikari.GuildChannel]:
     map_chat_category_ids: list[int] = []
@@ -639,8 +641,8 @@ async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Gu
         else:
             async_tasks.append(asyncio.create_task(ctx.respond(
                 f"""Player moved to {new_location}""")))
-        async_tasks.append(asyncio.create_task(locations_message(ctx, guild, map_to_use, flatten_list_of_lists(moved_players.values()), to_message, new_location)))
         await asyncio.gather(*async_tasks)
+    await locations_message(ctx, guild, map_to_use, flatten_list_of_lists(moved_players.values()), to_message, new_location)
 
 def message_is_bot_or_commandlike(message: hikari.PartialMessage) -> bool:
     return (message.content is not None and message.content is not hikari.UNDEFINED and message.content[0] in ("=", "!", "/", "?", ".")) or (bool(message.author) and message.author.is_bot)
@@ -693,10 +695,10 @@ async def add_player(ctx: lightbulb.SlashContext) -> None:
         settings = settings_manager.get_settings(guild.id)
         if settings.should_track_roles:
             await set_new_location_role(ctx, player, guild, fetched_map.name, starting_location)
-        if nullable_spectator_text_channel is not None:
-            spec_message = await nullable_spectator_text_channel.send(f"{player.mention} finds themselves on {fetched_map.name}")
-            await locations_message(ctx, guild, fetched_map, [player], spec_message, starting_location)
-        await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
+    if nullable_spectator_text_channel is not None:
+        spec_message = await nullable_spectator_text_channel.send(f"{player.mention} finds themselves on {fetched_map.name}")
+        await locations_message(ctx, guild, fetched_map, [player], spec_message, starting_location)
+    await ctx.respond(f"{get_sanitized_player_name(player)} added to {fetched_map.name} at {fetched_map.locations[0]}")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
@@ -742,7 +744,7 @@ async def remove_player(ctx: lightbulb.SlashContext) -> None:
     async with fetched_map.cond:
         for channel in get_player_location_channels(guild, player, fetched_map.name):
             await channel.delete()
-        await locations_message(ctx, guild, fetched_map, [player], None, None)
+    await locations_message(ctx, guild, fetched_map, [player], None, None)
     nullable_spectator_text_channel = find_spectator_channel(guild, fetched_map, active_location)
     if nullable_spectator_text_channel is not None:
         await nullable_spectator_text_channel.send(f"{player.mention} removed from {fetched_map.name}")

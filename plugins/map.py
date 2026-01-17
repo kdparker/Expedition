@@ -36,6 +36,9 @@ MAX_DISPLAY_NAME_LENGTH = 80
 def flatten_list_of_lists(lists):
     return [item for sublist in lists for item in sublist]
 
+def is_admin(ctx: lightbulb.SlashContext) -> bool:
+    return not ((isinstance(ctx.interaction.member, hikari.InteractionMember) and ((~ctx.interaction.member.permissions and hikari.Permissions.MANAGE_GUILD) is not hikari.Permissions.NONE)))
+
 async def get_role_with_name(guild:hikari.Guild, role_name: str, should_fetch: bool = True) -> Optional[hikari.Role]:
     if should_fetch:
         await guild.fetch_roles()
@@ -218,10 +221,10 @@ def cache_locations_channel_message_array(map_name: str, message_array: list[hik
 
 locations_message_cond = asyncio.Condition()
 async def locations_message(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players_changed: list[hikari.Member], change_message: Optional[hikari.Message], new_location: Optional[str]) -> None:
+    locations_channel = find_locations_channel(guild, map_to_use)
+    if not locations_channel:
+        return
     async with locations_message_cond:
-        locations_channel = find_locations_channel(guild, map_to_use)
-        if not locations_channel:
-            return
         locations_channel_message_array = []
 
         locations_channel_message_array = await get_locations_channel_message_array(locations_channel, map_to_use)
@@ -541,7 +544,7 @@ async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Gu
             await ctx.respond(f"{new_location} is not in the map you are moving with")
             return
         
-        if new_location in map_to_use.role_requirements:
+        if new_location in map_to_use.role_requirements and not is_admin(ctx):
             found_good_role = False
             for role_id in player.role_ids:
                 if role_id in map_to_use.role_requirements[new_location]:

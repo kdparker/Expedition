@@ -24,6 +24,9 @@ class ServerSettings:
     peek_percentage: int = 10
     peek_cooldown_seconds: int = 0
     announce_entry: bool = False
+    hunt_enabled: bool = False
+    hunt_percentage: int = 20
+    hunt_cooldown_seconds: int = 60
 
     
 class SettingsManager:
@@ -124,6 +127,27 @@ class SettingsManager:
         await self._update_settings(server_settings)
         return server_settings
     
+    async def set_hunt_enabled(self, server_id: int, hunt_enabled: bool) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.hunt_enabled = hunt_enabled
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
+    async def set_hunt_percentage(self, server_id: int, hunt_percentage: int) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.hunt_percentage = hunt_percentage
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
+    async def set_hunt_cooldown_seconds(self, server_id: int, hunt_cooldown_seconds: int) -> ServerSettings:
+        server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
+        server_settings.hunt_cooldown_seconds = hunt_cooldown_seconds
+        self._settings_dict[server_id] = server_settings
+        await self._update_settings(server_settings)
+        return server_settings
+    
     async def set_announce_entry(self, server_id: int, announce_entry: bool) -> ServerSettings:
         server_settings = self._settings_dict.get(server_id, ServerSettings(server_id))
         server_settings.announce_entry = announce_entry
@@ -148,7 +172,10 @@ class SettingsManager:
             PEEK_PERCENTAGE = 12
             PEEK_COOLDOWN_SECONDS = 13
             ANNOUNCE_ENTRY = 14
-            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds, announce_entry FROM server_settings") as cursor:
+            HUNT_ENABLED = 15
+            HUNT_PERCENTAGE = 16
+            HUNT_COOLDOWN_SECONDS = 17
+            async with db.execute("SELECT server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds, announce_entry, hunt_enabled, hunt_percentage, hunt_cooldown_seconds FROM server_settings") as cursor:
                 async for row in cursor:
                     server_id = row[SERVER_ID]
                     spectator_role_id = row[SPECTATOR_ROLE_ID]
@@ -165,7 +192,10 @@ class SettingsManager:
                     peek_percentage = row[PEEK_PERCENTAGE]
                     peek_cooldown_seconds = row[PEEK_COOLDOWN_SECONDS]
                     announce_entry = True if row[ANNOUNCE_ENTRY] else False
-                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds, announce_entry)
+                    hunt_enabled = True if row[HUNT_ENABLED] else False
+                    hunt_percentage = row[HUNT_PERCENTAGE]
+                    hunt_cooldown_seconds = row[HUNT_COOLDOWN_SECONDS]
+                    server_settings = ServerSettings(server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds, announce_entry, hunt_enabled, hunt_percentage, hunt_cooldown_seconds,)
                     self._settings_dict[server_id] = server_settings
         return self
 
@@ -186,7 +216,10 @@ class SettingsManager:
             peek_cooldown_seconds = str(server_settings.peek_cooldown_seconds)
             sync_commands_and_bots_to_spectators = "1" if server_settings.sync_commands_and_bots_to_spectators else "0"
             announce_entry = "1" if server_settings.announce_entry else "0"
+            hunt_enabled = "1" if server_settings.hunt_enabled else "0"
+            hunt_percentage = str(server_settings.hunt_percentage)
+            hunt_cooldown_seconds = str(server_settings.hunt_cooldown_seconds)
             await db.execute(
-                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds, announce_entry) VALUES 
-                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators}, {yell_enabled}, {yell_cooldown_seconds}, {whisper_enabled}, {whisper_percentage}, {whisper_cooldown_seconds}, {peek_enabled}, {peek_percentage}, {peek_cooldown_seconds}, {announce_entry})""")
+                f"""INSERT OR REPLACE INTO server_settings (server_id, spectator_role_id, admin_role_id, should_track_roles, cooldown_minutes, sync_commands_and_bots_to_spectators, yell_enabled, yell_cooldown_seconds, whisper_enabled, whisper_percentage, whisper_cooldown_seconds, peek_enabled, peek_percentage, peek_cooldown_seconds, announce_entry, hunt_enabled, hunt_percentage, hunt_cooldown_seconds) VALUES 
+                ({server_id}, {spectator_role_id}, {admin_role_id}, {should_track_roles}, {cooldown_minutes}, {sync_commands_and_bots_to_spectators}, {yell_enabled}, {yell_cooldown_seconds}, {whisper_enabled}, {whisper_percentage}, {whisper_cooldown_seconds}, {peek_enabled}, {peek_percentage}, {peek_cooldown_seconds}, {announce_entry}, {hunt_enabled}, {hunt_percentage}, {hunt_cooldown_seconds})""")
             await db.commit()

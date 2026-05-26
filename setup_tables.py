@@ -76,6 +76,12 @@ ANNOUNCE_ENTRY_SERVER_SETTING = """
 ALTER TABLE server_settings ADD COLUMN announce_entry INT NOT NULL DEFAULT 0;
 """
 
+ADD_HUNT_SERVER_SETTINGS = """
+ALTER TABLE server_settings ADD COLUMN hunt_enabled INT NOT NULL DEFAULT 0;
+ALTER TABLE server_settings ADD COLUMN hunt_percentage INT NOT NULL DEFAULT 20;
+ALTER TABLE server_settings ADD COLUMN hunt_cooldown_seconds INT NOT NULL DEFAULT 60;
+"""
+
 async def create_table():
     async with aiosqlite.connect(consts.SQLITE_DB) as db:
         await db.execute(CREATE_LOCATIONS_QUERY)
@@ -120,6 +126,11 @@ async def create_table():
             print(e)
         try:
             await db.execute(ANNOUNCE_ENTRY_SERVER_SETTING)
+        except Exception as e:
+            print(e)
+        try:
+            for line in ADD_HUNT_SERVER_SETTINGS.split('\n'):
+                await db.execute(line)
         except Exception as e:
             print(e)
         await db.commit()

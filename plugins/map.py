@@ -1029,6 +1029,43 @@ async def set_peek_cooldown(ctx: lightbulb.SlashContext) -> None:
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.command("toggle-hunting", "Turn on/off the ability for players to hunt")
+@lightbulb.implements(commands.SlashCommand)
+async def toggle_hunting(ctx: lightbulb.SlashContext) -> None:
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Toggling hunting...", flags=hikari.MessageFlag.LOADING)
+    guild = await get_guild(ctx)
+    server_settings = settings_manager.get_settings(guild.id)
+    new_value = not server_settings.hunt_enabled
+    await settings_manager.set_hunt_enabled(guild.id, new_value)
+    await ctx.respond(f"{'Enabled' if new_value else 'Disabled'} hunting")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("percentage", "Percent chance to be seen while hunting (default 20%)", type=int)
+@lightbulb.command("set-hunt-percentage", "Set how likely it is for a person to be seen while hunting")
+@lightbulb.implements(commands.SlashCommand)
+async def set_hunt_percentage(ctx: lightbulb.SlashContext) -> None:
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting hunting percentage...", flags=hikari.MessageFlag.LOADING)
+    percentage = ctx.options['percentage']
+    guild = await get_guild(ctx)
+    await settings_manager.set_hunt_percentage(guild.id, percentage)
+    await ctx.respond(f"Percentage set")
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
+@lightbulb.option("seconds", "Seconds to set cooldown to (0 means no cooldown, default is 60)", type=int)
+@lightbulb.command("set-hunt-cooldown", "How many seconds a player has to wait between hunting")
+@lightbulb.implements(commands.SlashCommand)
+async def set_hunt_cooldown(ctx: lightbulb.SlashContext) -> None:
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Setting cooldown...", flags=hikari.MessageFlag.LOADING)
+    seconds = ctx.options['seconds']
+    guild = await get_guild(ctx)
+    await settings_manager.set_hunt_cooldown_seconds(guild.id, seconds)
+    await ctx.respond(f"Cooldown set")
+
+
+@plugin.command
+@lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))
 @lightbulb.option("map-name", "Name of the map the player will be removed from", type=str)
 @lightbulb.command("prepopulate-roles", "Create all roles for a map without needing to go there, useful for setting up for a season")
 @lightbulb.implements(commands.SlashCommand)
@@ -1352,6 +1389,64 @@ async def peek(ctx: lightbulb.SlashContext) -> None:
         return
     players_string = ', '.join(map(lambda p: f"{p.mention} ({p.display_name})", location_players))
     await ctx.respond(f"{players_string} are in {target_location}")
+
+@plugin.command
+@lightbulb.command("hunt", "Hunt for hidden items in your current location")
+@lightbulb.implements(commands.SlashCommand)
+async def hunt(ctx: lightbulb.SlashContext) -> None:
+    guild = await get_guild(ctx)
+    settings = settings_manager.get_settings(guild.id)
+    player = await memberEnforcer.ensure_type(ctx.member, ctx, "Somehow couldn't find the player associated with who performed the command, contact the admins")
+    maps_player_is_in = get_maps_player_is_in(guild, player)
+    if not maps_player_is_in:
+        await ctx.respond("You're not in a map")
+        return
+    if not settings.hunt_enabled:
+        await ctx.respond("Hunting is currently disabled")
+        return
+    map_to_use = maps_player_is_in[0]
+    if len(maps_player_is_in) >= 2:
+        error_message = "Since you are in two maps, we need you to use the command in the map you want to run in the command in"
+        category = await guildChannelEnforcer.ensure_type(get_category_of_channel(guild, ctx.channel_id), ctx, error_message)
+        category_name = await stringEnforcer.ensure_type(category.name, ctx, error_message)
+        map_name = await stringEnforcer.ensure_type(get_map_name_from_category(category_name), ctx, error_message)
+        if map_name not in map(lambda m: m.name, maps_player_is_in):
+            await ctx.respond(error_message)
+            return
+        map_to_use = list(filter(lambda m: m.name == map_name, maps_player_is_in))[0]
+    active_channel = await guildChannelEnforcer.ensure_type(
+        get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Could not find a channel you are active in for your location, if this is an error contact the admins")
+    category = await guildChannelEnforcer.ensure_type(
+        get_category_of_channel(guild, active_channel.id), ctx, "Could not find category of active channel, contact the admins")
+    current_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Could not determine location from your active channel, contact the admins")
+    if settings.hunt_cooldown_seconds > 0:
+        if player.id in map_to_use.hunt_cooldowns:
+            last_hunt_time: datetime.datetime = map_to_use.hunt_cooldowns[player.id]
+            next_possible_hunt_time = last_hunt_time + datetime.timedelta(seconds=settings.hunt_cooldown_seconds)
+            diff = next_possible_hunt_time - datetime.datetime.now()
+            if diff.total_seconds() > 0:
+                await ctx.respond(f"Hunting in this map is still on cooldown for {diff.total_seconds()} seconds")
+                return
+    await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Hunting...", flags=hikari.MessageFlag.LOADING)
+    was_seen = settings.hunt_percentage > 0 and random.randint(1, 100) <= settings.hunt_percentage
+    if was_seen:
+        nullable_category = get_category_of_channel(guild, active_channel.id)  
+        if nullable_category is None:
+            return
+        map_category: hikari.GuildChannel = nullable_category
+        chat_channels = get_channels_in_category(guild, map_category)
+        for chat_channel in chat_channels:
+            if chat_channel == active_channel or not isinstance(chat_channel, hikari.GuildTextChannel):
+                continue
+            chat_text_channel: hikari.GuildTextChannel = chat_channel
+            chat_channel_location = get_location_channels_location(chat_text_channel)
+            if chat_channel_location == current_location:
+                await chat_channel.send(f"You saw {player.mention} ({player.display_name}) hunt")
+    map_to_use.reset_hunt_cooldown(player.id)
+    channel = guild.get_channel(ctx.channel_id) 
+    if channel is not None:
+        await log_action_to_flint(ctx, "hunt", player, channel)
+    await ctx.respond("You have hunted, you can now message production")
 
 @plugin.command
 @lightbulb.add_checks(lightbulb.checks.has_guild_permissions(hikari.Permissions.MANAGE_GUILD))

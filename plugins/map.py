@@ -527,9 +527,9 @@ async def execute_mirrored_webhook(bot: hikari.GatewayBot, webhook: hikari.Execu
 
 async def edit_location_to_move(player: hikari.Member, location_channel: hikari.GuildChannel, new_location: str) -> tuple[bool, float]:
     try:
-        await location_channel.edit(name=get_player_location_name(player, new_location), rate_limit_per_user=1)
+        await location_channel.edit(name=get_player_location_name(player, new_location))
         return True, 0
-    except hikari.RateLimitTooLongError as e:
+    except hikari.RateLimitedError as e:
         return False, e.retry_after
 
 async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players: list[hikari.Member], new_location: str, team_name: Optional[str], ignore_cooldown: bool) -> None:

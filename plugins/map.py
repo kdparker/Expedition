@@ -792,10 +792,7 @@ async def move_team(ctx: lightbulb.SlashContext) -> None:
     team_role: hikari.Role = ctx.options['team']
     map_to_use = await get_map(ctx, guild, map_name)
     player = await interactionMemberEnforcer.ensure_type(ctx.interaction.member, ctx, "Somehow couldn't get player from the command")
-    if "tribe" not in team_role.name.lower() and "team" not in team_role.name.lower():
-        await ctx.respond(f"Role {team_role.name} does not contain 'team' or 'tribe', please use a different role")
-        return
-    if player and player.permissions & hikari.Permissions.MANAGE_GUILD == 0 and team_role.id not in player.role_ids:
+    if player and player.permissions & hikari.Permissions.MANAGE_GUILD == 0:
         await ctx.respond("You are not allowed to move other teams, only admins or team members can do that")
         return
     players_to_move = await get_players_in_map_with_role(ctx, guild, map_to_use, team_role)
@@ -1116,9 +1113,9 @@ async def remove_location(ctx: lightbulb.SlashContext) -> None:
     async with result_map.cond:
         location_channels = get_all_location_channels_for_map(guild, result_map.name)
         for location_channel in location_channels:
-            if location_channel.name and f"-{location_name}" not in location_channel.name:
+            if location_channel.name and location_channel.name.lower() and f"-{location_name.lower()}" not in location_channel.name.lower():
                 continue
-            default_location = result_map.locations[0]
+            default_location = result_map.locations[0] if result_map.locations[0] != location_name else result_map.locations[1]
             nullable_player = await get_player_from_location(ctx.bot, guild, location_channel)
             if nullable_player is None:
                 continue

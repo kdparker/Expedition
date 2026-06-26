@@ -529,7 +529,7 @@ async def edit_location_to_move(player: hikari.Member, location_channel: hikari.
     try:
         await location_channel.edit(name=get_player_location_name(player, new_location))
         return True, 0
-    except hikari.RateLimitedError as e:
+    except hikari.errors.RateLimitTooLongError as e:
         return False, e.retry_after
 
 async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players: list[hikari.Member], new_location: str, team_name: Optional[str], ignore_cooldown: bool) -> None:
@@ -792,10 +792,7 @@ async def move_team(ctx: lightbulb.SlashContext) -> None:
     team_role: hikari.Role = ctx.options['team']
     map_to_use = await get_map(ctx, guild, map_name)
     player = await interactionMemberEnforcer.ensure_type(ctx.interaction.member, ctx, "Somehow couldn't get player from the command")
-    if "tribe" not in team_role.name.lower() and "team" not in team_role.name.lower():
-        await ctx.respond(f"Role {team_role.name} does not contain 'team' or 'tribe', please use a different role")
-        return
-    if player and player.permissions & hikari.Permissions.MANAGE_GUILD == 0 and team_role.id not in player.role_ids:
+    if player and player.permissions & hikari.Permissions.MANAGE_GUILD == 0:
         await ctx.respond("You are not allowed to move other teams, only admins or team members can do that")
         return
     players_to_move = await get_players_in_map_with_role(ctx, guild, map_to_use, team_role)
@@ -1118,7 +1115,7 @@ async def remove_location(ctx: lightbulb.SlashContext) -> None:
         for location_channel in location_channels:
             if location_channel.name and f"-{location_name}" not in location_channel.name:
                 continue
-            default_location = result_map.locations[0]
+            default_location = result_map.locations[0] if result_map.locations[0] != location_name else result_map.locations[1]
             nullable_player = await get_player_from_location(ctx.bot, guild, location_channel)
             if nullable_player is None:
                 continue

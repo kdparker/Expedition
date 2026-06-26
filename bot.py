@@ -8,13 +8,13 @@ from lightbulb import commands
 from plugins import map
 from utils.type_enforcer import TypeEnforcementError
 
-with open('secrets/client', 'r') as client_file:
+with open('secrets/client.test', 'r') as client_file:
     token = client_file.read().strip()
 
 bot = lightbulb.BotApp(
     token=token,
     intents=hikari.Intents.ALL, 
-    default_enabled_guilds=(),
+    default_enabled_guilds=(935681965254918186, 935683503461388388),
     logs={
         "version": 1,
         "incremental": True,

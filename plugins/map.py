@@ -529,7 +529,7 @@ async def edit_location_to_move(player: hikari.Member, location_channel: hikari.
     try:
         await location_channel.edit(name=get_player_location_name(player, new_location))
         return True, 0
-    except hikari.RateLimitedError as e:
+    except hikari.errors.RateLimitTooLongError as e:
         return False, e.retry_after
 
 async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players: list[hikari.Member], new_location: str, team_name: Optional[str], ignore_cooldown: bool) -> None:

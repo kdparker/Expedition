@@ -531,6 +531,13 @@ async def edit_location_to_move(player: hikari.Member, location_channel: hikari.
         return True, 0
     except hikari.errors.RateLimitTooLongError as e:
         return False, e.retry_after
+    
+async def check_cant_roles(guild: hikari.Guild, player: hikari.Member, action: str) -> bool:
+    roles = await guild.fetch_roles()
+    for role in roles:
+        if role.name.lower() == f"cant{action}".lower() and role.id in player.role_ids:
+            return False
+    return True
 
 async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Guild, map_to_use: Map, players: list[hikari.Member], new_location: str, team_name: Optional[str], ignore_cooldown: bool) -> None:
     settings = settings_manager.get_settings(guild.id)
@@ -553,6 +560,11 @@ async def move_players_to_location(ctx: lightbulb.SlashContext, guild: hikari.Gu
             if not found_good_role:
                 await ctx.respond(f"You do not have the required role to move to {new_location}")
                 return
+            
+        can_move = await check_cant_roles(guild, player, "move")
+        if not can_move and not is_admin(ctx):
+            await ctx.respond("You do not have the required statistics to move")
+            return
         
         player_to_location_channel = await get_player_to_location_channel_map_for_players(ctx, guild, map_to_use, players)
 
@@ -1205,6 +1217,10 @@ async def yell(ctx: lightbulb.SlashContext) -> None:
             if diff.total_seconds() > 0:
                 await ctx.respond(f"Yelling in this map is still on cooldown for {diff.total_seconds()} seconds")
                 return
+    can_yell = await check_cant_roles(guild, player, "yell")
+    if not can_yell and not is_admin(ctx):
+        await ctx.respond("You do not have the required statistics to yell")
+        return
     await ctx.respond(hikari.interactions.ResponseType.DEFERRED_MESSAGE_CREATE, "Yelling...", flags=hikari.MessageFlag.LOADING)
     active_channel = await guildChannelEnforcer.ensure_type(get_active_channel_for_player_in_map(guild, player, map_to_use), ctx, "Can't find player's active channel in the map")
     active_location = await stringEnforcer.ensure_type(get_location_channels_location(active_channel), ctx, "Can't find active location")
@@ -1248,6 +1264,10 @@ async def whisper(ctx: lightbulb.SlashContext) -> None:
         return
     if not settings.whisper_enabled:
         await ctx.respond("Whispering is currently disabled")
+        return
+    can_whisper = await check_cant_roles(guild, player, "whisper")
+    if not can_whisper and not is_admin(ctx):
+        await ctx.respond("You do not have the required statistics to whisper")
         return
     map_to_use = maps_player_is_in[0]
     if len(maps_player_is_in) >= 2:
@@ -1325,6 +1345,10 @@ async def peek(ctx: lightbulb.SlashContext) -> None:
         return
     if not settings.peek_enabled:
         await ctx.respond("Peeking is currently disabled")
+        return
+    can_peek = await check_cant_roles(guild, player, "peek")
+    if not can_peek and not is_admin(ctx):
+        await ctx.respond("You do not have the required statistics to peek")
         return
     map_to_use = maps_player_is_in[0]
     if len(maps_player_is_in) >= 2:
